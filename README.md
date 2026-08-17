@@ -94,3 +94,10 @@ mcp dev server.py       # launch MCP Inspector to test tools
 - [ ] LangGraph agent with human-in-the-loop confirmation
 - [ ] Evaluation harness (task completion, groundedness)
 - [ ] Public deployment + demo GIF
+
+
+- [x] Rate limiting on write actions
+
+Note: Rate limiting is in-memory (5 calls/60s per user) — resets on
+server restart and wouldn't hold up across multiple server instances. A
+production version would use Redis for shared state.
