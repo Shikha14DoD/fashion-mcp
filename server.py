@@ -39,3 +39,25 @@ def search_garments(
 
 if __name__ == "__main__":
     mcp.run()
+
+@mcp.tool()
+def check_availability(garment_id: int, size: str) -> dict:
+    """Check stock quantity for a specific garment and size."""
+    query = """
+        SELECT g.name, i.size, i.qty
+        FROM inventory i
+        JOIN garments g ON g.id = i.garment_id
+        WHERE i.garment_id = %(garment_id)s AND i.size = %(size)s
+    """
+    with get_conn() as conn:
+        row = conn.execute(query, {"garment_id": garment_id, "size": size}).fetchone()
+        if row is None:
+            return {"error": f"No record for garment {garment_id} in size {size}"}
+        name, size_val, qty = row
+        return {
+            "garment_id": garment_id,
+            "name": name,
+            "size": size_val,
+            "qty": qty,
+            "in_stock": qty > 0,
+        }
