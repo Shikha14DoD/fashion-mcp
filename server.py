@@ -4,6 +4,21 @@ import time
 import json
 from dotenv import load_dotenv
 from mcp.server.mcpserver import MCPServer
+from collections import defaultdict
+
+RATE_LIMIT_MAX = 5          # max calls
+RATE_LIMIT_WINDOW = 60      # per this many seconds
+_call_history: dict[str, list[float]] = defaultdict(list)
+
+def check_rate_limit(user_id: str) -> bool:
+    """Return True if user is within their rate limit, False if exceeded."""
+    now = time.time()
+    recent = [t for t in _call_history[user_id] if now - t < RATE_LIMIT_WINDOW]
+    _call_history[user_id] = recent
+    if len(recent) >= RATE_LIMIT_MAX:
+        return False
+    _call_history[user_id].append(now)
+    return True
 
 
 
@@ -95,6 +110,33 @@ def check_availability(garment_id: int, size: str) -> dict:
             "in_stock": qty > 0,
         }
 
+CARE_MAP = {
+    "Cotton": "Machine wash cold, tumble dry low.",
+    "Silk": "Dry clean only, or hand wash cold and lay flat to dry.",
+    "Linen": "Machine wash cold, air dry to avoid shrinkage.",
+    "Polyester": "Machine wash warm, tumble dry low.",
+    "Denim": "Wash cold, inside out, tumble dry low.",
+    "Wool": "Dry clean recommended, or hand wash cold and lay flat.",
+    "Georgette": "Dry clean or gentle hand wash, do not wring.",
+}
+
+@mcp.tool()
+def get_care_instructions(garment_id: int) -> dict:
+    """Get fabric and care instructions for a garment."""
+    with get_conn() as conn:
+        row = conn.execute(
+            "SELECT name, fabric FROM garments WHERE id = %(id)s", {"id": garment_id}
+        ).fetchone()
+        if row is None:
+            return {"error": f"Garment {garment_id} not found"}
+        name, fabric = row
+        return {
+            "garment_id": garment_id,
+            "name": name,
+            "fabric": fabric,
+            "care": CARE_MAP.get(fabric, "Check garment label for care instructions."),
+        }
+
 @mcp.tool()
 def save_to_wishlist(api_key: str, garment_id: int) -> dict:
     """Save a garment to the authenticated user's wishlist."""
@@ -105,6 +147,11 @@ def save_to_wishlist(api_key: str, garment_id: int) -> dict:
         log_action(None, "save_to_wishlist", {"garment_id": garment_id},
                    "auth_failed", int((time.time() - start) * 1000))
         return {"error": "Invalid API key"}
+
+    if not check_rate_limit(user_id):
+        log_action(user_id, "save_to_wishlist", {"garment_id": garment_id},
+                   "rate_limited", int((time.time() - start) * 1000))
+        return {"error": "Rate limit exceeded. Try again shortly."}
 
     with get_conn() as conn:
         exists = conn.execute(
@@ -127,5 +174,3 @@ def save_to_wishlist(api_key: str, garment_id: int) -> dict:
     latency = int((time.time() - start) * 1000)
     log_action(user_id, "save_to_wishlist", {"garment_id": garment_id}, "success", latency)
     return {"status": "saved", "user_id": user_id, "garment_id": garment_id}
-
-    
