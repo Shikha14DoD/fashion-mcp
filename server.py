@@ -85,8 +85,6 @@ def search_garments(
         cols = ["id", "name", "article_type", "colour", "price_cents", "fabric"]
         return [dict(zip(cols, r)) for r in rows]
 
-if __name__ == "__main__":
-    mcp.run()
 
 @mcp.tool()
 def check_availability(garment_id: int, size: str) -> dict:
@@ -174,3 +172,6 @@ def save_to_wishlist(api_key: str, garment_id: int) -> dict:
     latency = int((time.time() - start) * 1000)
     log_action(user_id, "save_to_wishlist", {"garment_id": garment_id}, "success", latency)
     return {"status": "saved", "user_id": user_id, "garment_id": garment_id}
+
+if __name__ == "__main__":
+    mcp.run()
