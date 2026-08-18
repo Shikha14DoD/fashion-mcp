@@ -5,6 +5,8 @@ from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
 from google import genai
 from google.genai import types
+import time
+from google.genai.errors import ServerError
 
 load_dotenv()
 
@@ -37,16 +39,34 @@ async def main():
 
             user_request = "Find me blue t-shirts under $100"
 
-            response = client.models.generate_content(
-                model="gemini-flash-latest",
-                contents=user_request,
-                config=types.GenerateContentConfig(tools=gemini_tools),
-            )
+            max_retries = 3
+            for attempt in range(max_retries):
+                try:
+                    response = client.models.generate_content(
+                        model="gemini-flash-latest",
+                        contents=user_request,
+                        config=types.GenerateContentConfig(tools=gemini_tools),
+                    )
+                    break
+                except ServerError as e:
+                    if attempt == max_retries - 1:
+                        print(f"Gemini unavailable after {max_retries} attempts: {e}")
+                        return
+                    wait = 2 ** attempt
+                    print(f"Gemini overloaded, retrying in {wait}s...")
+                    time.sleep(wait)
 
             part = response.candidates[0].content.parts[0]
             if part.function_call:
-                print(f"Gemini wants to call: {part.function_call.name}")
-                print(f"With arguments: {dict(part.function_call.args)}")
+                tool_name = part.function_call.name
+                tool_args = dict(part.function_call.args)
+                print(f"Gemini wants to call: {tool_name}")
+                print(f"With arguments: {tool_args}")
+
+                result = await session.call_tool(tool_name, tool_args)
+                print("\nActual tool result:")
+                for content in result.content:
+                    print(content.text)
             else:
                 print("Gemini responded with text instead:", part.text)
 
