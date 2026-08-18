@@ -1,11 +1,11 @@
 import asyncio
 import os
+import time
 from dotenv import load_dotenv
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
 from google import genai
 from google.genai import types
-import time
 from google.genai.errors import ServerError
 
 load_dotenv()
@@ -16,12 +16,22 @@ server_params = StdioServerParameters(
 )
 
 def mcp_tool_to_gemini_schema(tool):
-    """Convert an MCP tool definition into the format Gemini's function-calling expects."""
     return types.FunctionDeclaration(
         name=tool.name,
         description=tool.description,
         parameters=tool.input_schema,
     )
+
+def call_gemini_with_retry(chat, message, max_retries=3):
+    for attempt in range(max_retries):
+        try:
+            return chat.send_message(message)
+        except ServerError as e:
+            if attempt == max_retries - 1:
+                raise
+            wait = 2 ** attempt
+            print(f"Gemini overloaded, retrying in {wait}s...")
+            time.sleep(wait)
 
 async def main():
     client = genai.Client(api_key=os.environ["GEMINI_API_KEY"])
@@ -37,38 +47,39 @@ async def main():
                 ])
             ]
 
-            user_request = "Find me blue t-shirts under $100"
+            chat = client.chats.create(
+                model="gemini-flash-latest",
+                config=types.GenerateContentConfig(tools=gemini_tools),
+            )
 
-            max_retries = 3
-            for attempt in range(max_retries):
-                try:
-                    response = client.models.generate_content(
-                        model="gemini-flash-latest",
-                        contents=user_request,
-                        config=types.GenerateContentConfig(tools=gemini_tools),
-                    )
+            print("Fashion styling assistant. Type 'quit' to exit.\n")
+
+            while True:
+                user_input = input("You: ").strip()
+                if user_input.lower() in ("quit", "exit"):
                     break
-                except ServerError as e:
-                    if attempt == max_retries - 1:
-                        print(f"Gemini unavailable after {max_retries} attempts: {e}")
-                        return
-                    wait = 2 ** attempt
-                    print(f"Gemini overloaded, retrying in {wait}s...")
-                    time.sleep(wait)
+                if not user_input:
+                    continue
 
-            part = response.candidates[0].content.parts[0]
-            if part.function_call:
-                tool_name = part.function_call.name
-                tool_args = dict(part.function_call.args)
-                print(f"Gemini wants to call: {tool_name}")
-                print(f"With arguments: {tool_args}")
+                response = call_gemini_with_retry(chat, user_input)
+                part = response.candidates[0].content.parts[0]
 
-                result = await session.call_tool(tool_name, tool_args)
-                print("\nActual tool result:")
-                for content in result.content:
-                    print(content.text)
-            else:
-                print("Gemini responded with text instead:", part.text)
+                if part.function_call:
+                    tool_name = part.function_call.name
+                    tool_args = dict(part.function_call.args)
+                    print(f"[calling {tool_name} with {tool_args}]")
+
+                    result = await session.call_tool(tool_name, tool_args)
+                    result_text = "\n".join(c.text for c in result.content)
+
+                    # send the tool result back so Gemini can respond in natural language
+                    follow_up = call_gemini_with_retry(
+                        chat,
+                        f"Tool result:\n{result_text}\n\nSummarize this for the user in a friendly way."
+                    )
+                    print(f"Assistant: {follow_up.text}\n")
+                else:
+                    print(f"Assistant: {part.text}\n")
 
 if __name__ == "__main__":
     asyncio.run(main())
