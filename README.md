@@ -125,7 +125,7 @@ mcp dev server.py       # launch MCP Inspector to test tools
 - [x] Rate limiting on write actions
 - [x] Real MCP client-server connection (not a direct import)
 - [x] Gemini function-calling: LLM selects the correct tool and arguments
-- [ ] Execute the tool call Gemini requests and feed results back
+- [x] Execute the tool call Gemini requests and feed results back
 - [ ] Multi-turn conversation loop
 - [ ] LangGraph state machine with human-in-the-loop confirmation gate
 - [ ] Simple chat UI
@@ -138,3 +138,16 @@ mcp dev server.py       # launch MCP Inspector to test tools
 Note: Rate limiting is in-memory (5 calls/60s per user) — resets on
 server restart and wouldn't hold up across multiple server instances. A
 production version would use Redis for shared state.
+
+**Status: Stage 3 in progress** — full loop working: Gemini selects a tool,
+the agent executes it via the real MCP protocol, and results return
+successfully. Retry with exponential backoff added after hitting a real
+Gemini 503 during development. Multi-turn conversation and LangGraph state
+machine not yet built.
+
+
+**Transient API failures:** hit a real `503 UNAVAILABLE` from Gemini's free
+tier during development — not a bug, just temporary overload. Added retry
+with exponential backoff (1s, 2s, 4s) rather than manually retrying, since
+this is a realistic failure mode any production agent needs to handle
+gracefully rather than crash on.
