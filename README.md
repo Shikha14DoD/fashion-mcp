@@ -47,8 +47,10 @@ catalog (44k+ garments), with audit logging on every call. A LangGraph agent
 (in progress) sits on top, handling multi-turn styling requests with a
 human-confirmation gate before any write action.
 
-Status: Stage 2 in progress — MCP server and tools built and verified.
-Agent layer not yet started.
+**Status: Stage 3 in progress** — MCP server complete with 4 tools, auth,
+audit logging, and rate limiting. Agent layer: MCP client connection working,
+Gemini function-calling verified. Tool execution loop and LangGraph state
+machine not yet built.
 
 ## Why this exists
 
@@ -74,6 +76,34 @@ per-user scoping, and an auditable action log — not just an LLM wrapper.
 Every call to `save_to_wishlist` is logged to `audit_log` — including failed
 auth attempts — with user id, arguments, result, and latency.
 
+
+## Engineering notes
+
+**Tool registration ordering bug (Stage 3):** `mcp.run()` was accidentally
+left in the middle of `server.py`, after only the first tool was defined.
+Since Python executes top to bottom, this silently started the server with
+only 1 of 4 tools registered — no error, just missing functionality. Caught
+by testing the server in isolation from the client and comparing tool counts
+at each layer. Fix: moved `if __name__ == "__main__": mcp.run()` to the true
+end of the file, after all `@mcp.tool()` definitions.
+
+**LLM-to-database value mismatch:** Gemini's function-calling naturally
+produces values like `"t-shirt"` when asked for casual clothing, while the
+catalog stores `"Tshirts"` (no space or hyphen). An exact or case-insensitive
+match alone missed this. Fixed with two layers: (1) the tool's docstring now
+shows Gemini real example values from the catalog, reducing how often this
+happens, and (2) the SQL query normalizes both the stored value and the
+incoming argument (lowercase, strip spaces/hyphens) before comparing, so the
+match succeeds even when phrasing differs. This is a documented example of
+why LLM-generated arguments can't be trusted to match a real schema exactly,
+and why validation/normalization has to happen in code, not just in the
+prompt.
+
+**Known limitation:** the normalization above transforms `article_type` on
+every query rather than at write time, so a standard database index can't be
+used on it. Fine at the current scale (44k rows) but would need an expression
+index or a precomputed normalized column at larger scale.
+
 ## Running locally
 
 \`\`\`bash
@@ -89,10 +119,17 @@ mcp dev server.py       # launch MCP Inspector to test tools
 
 ## Roadmap
 
-- [ ] `get_care_instructions` tool
-- [ ] Rate limiting on write actions
-- [ ] LangGraph agent with human-in-the-loop confirmation
-- [ ] Evaluation harness (task completion, groundedness)
+## Roadmap
+
+- [x] `get_care_instructions` tool
+- [x] Rate limiting on write actions
+- [x] Real MCP client-server connection (not a direct import)
+- [x] Gemini function-calling: LLM selects the correct tool and arguments
+- [ ] Execute the tool call Gemini requests and feed results back
+- [ ] Multi-turn conversation loop
+- [ ] LangGraph state machine with human-in-the-loop confirmation gate
+- [ ] Simple chat UI
+- [ ] Evaluation harness (task success rate, groundedness)
 - [ ] Public deployment + demo GIF
 
 
