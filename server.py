@@ -65,17 +65,21 @@ def search_garments(
     max_price_usd: float = 10000,
     limit: int = 10,
 ) -> list[dict]:
-    """Search the garment catalog by type, colour, and max price."""
+    """Search the garment catalog by garment type, colour, and max price.
+    article_type examples in the catalog: Tshirts, Shirts, Casual Shoes, Kurtas,
+    Watches, Sports Shoes, Tops, Handbags, Heels, Sunglasses (values are stored
+    without spaces or hyphens, e.g. 'Tshirts' not 't-shirt')."""
     query = """
         SELECT id, name, article_type, colour, price_cents, fabric
         FROM garments
-        WHERE (%(article_type)s = '' OR article_type ILIKE %(article_type)s)
+        WHERE (%(article_type)s = '' OR REPLACE(LOWER(article_type), ' ', '') LIKE %(article_type)s)
           AND (%(colour)s = '' OR colour ILIKE %(colour)s)
           AND price_cents <= %(max_cents)s
         LIMIT %(limit)s
     """
+    normalized_type = article_type.lower().replace(" ", "").replace("-", "")
     params = {
-        "article_type": article_type,
+        "article_type": f"%{normalized_type}%" if normalized_type else "",
         "colour": colour,
         "max_cents": int(max_price_usd * 100),
         "limit": limit,
@@ -84,8 +88,7 @@ def search_garments(
         rows = conn.execute(query, params).fetchall()
         cols = ["id", "name", "article_type", "colour", "price_cents", "fabric"]
         return [dict(zip(cols, r)) for r in rows]
-
-
+    
 @mcp.tool()
 def check_availability(garment_id: int, size: str) -> dict:
     """Check stock quantity for a specific garment and size."""
