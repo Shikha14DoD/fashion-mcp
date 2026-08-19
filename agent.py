@@ -1,19 +1,13 @@
 import asyncio
-import os
-import time
-from dotenv import load_dotenv
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
-from google import genai
 from google.genai import types
-from google.genai.errors import ServerError
+from langgraph.graph import StateGraph, END
 
-load_dotenv()
+from graph_state import AgentState
+from graph_nodes import make_agent_node, make_tools_node, confirm_node, mcp_tools_to_groq_schema
 
-server_params = StdioServerParameters(
-    command="python",
-    args=["server.py"],
-)
+server_params = StdioServerParameters(command="python", args=["server.py"])
 
 def mcp_tool_to_gemini_schema(tool):
     return types.FunctionDeclaration(
@@ -22,37 +16,47 @@ def mcp_tool_to_gemini_schema(tool):
         parameters=tool.input_schema,
     )
 
-def call_gemini_with_retry(chat, message, max_retries=3):
-    for attempt in range(max_retries):
-        try:
-            return chat.send_message(message)
-        except ServerError as e:
-            if attempt == max_retries - 1:
-                raise
-            wait = 2 ** attempt
-            print(f"Gemini overloaded, retrying in {wait}s...")
-            time.sleep(wait)
+def route_after_agent(state):
+    action = state.get("pending_action")
+    if action is None:
+        return END
+    if action.get("auto"):
+        return "tools"
+    return "confirm"
+
+def route_after_confirm(state):
+    action = state.get("pending_action")
+    if action and action.get("approved"):
+        return "tools"
+    return "agent"
 
 async def main():
-    client = genai.Client(api_key=os.environ["GEMINI_API_KEY"])
-
     async with stdio_client(server_params) as (read, write):
         async with ClientSession(read, write) as session:
             await session.initialize()
             mcp_tools = await session.list_tools()
+            gemini_tools = [types.Tool(function_declarations=[
+                mcp_tool_to_gemini_schema(t) for t in mcp_tools.tools
+            ])]
+            groq_tools = mcp_tools_to_groq_schema(mcp_tools.tools)
 
-            gemini_tools = [
-                types.Tool(function_declarations=[
-                    mcp_tool_to_gemini_schema(t) for t in mcp_tools.tools
-                ])
-            ]
+            graph = StateGraph(AgentState)
+            graph.add_node("agent", make_agent_node(gemini_tools, groq_tools))
+            graph.add_node("tools", make_tools_node(session))
+            graph.add_node("confirm", confirm_node)
 
-            chat = client.chats.create(
-                model="gemini-flash-latest",
-                config=types.GenerateContentConfig(tools=gemini_tools),
-            )
+            graph.set_entry_point("agent")
+            graph.add_conditional_edges("agent", route_after_agent,
+                                         {"tools": "tools", "confirm": "confirm", END: END})
+            graph.add_edge("tools", "agent")
+            graph.add_conditional_edges("confirm", route_after_confirm,
+                                         {"tools": "tools", "agent": "agent"})
 
-            print("Fashion styling assistant. Type 'quit' to exit.\n")
+            app = graph.compile()
+
+            print("Fashion styling assistant (LangGraph). Type 'quit' to exit.\n")
+            api_key = "demo_key_123"
+            state = {"messages": [], "api_key": api_key, "pending_action": None}
 
             while True:
                 user_input = input("You: ").strip()
@@ -61,25 +65,11 @@ async def main():
                 if not user_input:
                     continue
 
-                response = call_gemini_with_retry(chat, user_input)
-                part = response.candidates[0].content.parts[0]
+                state["messages"].append({"role": "user", "content": user_input})
+                state = await app.ainvoke(state)
 
-                if part.function_call:
-                    tool_name = part.function_call.name
-                    tool_args = dict(part.function_call.args)
-                    print(f"[calling {tool_name} with {tool_args}]")
-
-                    result = await session.call_tool(tool_name, tool_args)
-                    result_text = "\n".join(c.text for c in result.content)
-
-                    # send the tool result back so Gemini can respond in natural language
-                    follow_up = call_gemini_with_retry(
-                        chat,
-                        f"Tool result:\n{result_text}\n\nSummarize this for the user in a friendly way."
-                    )
-                    print(f"Assistant: {follow_up.text}\n")
-                else:
-                    print(f"Assistant: {part.text}\n")
+                last = state["messages"][-1]
+                print(f"Assistant: {last.content}\n")
 
 if __name__ == "__main__":
     asyncio.run(main())
