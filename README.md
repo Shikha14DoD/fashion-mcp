@@ -151,3 +151,25 @@ tier during development — not a bug, just temporary overload. Added retry
 with exponential backoff (1s, 2s, 4s) rather than manually retrying, since
 this is a realistic failure mode any production agent needs to handle
 gracefully rather than crash on.
+
+**Hallucinated capability (caught via testing):** without explicit scope
+constraints, the agent — when asked to "place the order" — fabricated a full
+checkout flow: an order summary, a request for shipping/payment details, and
+two different fake checkout URLs, despite no purchasing tool existing
+anywhere in the system. This is a serious finding for any LLM-backed product:
+an agent can convincingly simulate capabilities it doesn't have. Fixed with
+an explicit system prompt enumerating the exact 4 available tools and
+instructing the model to state its real limitations rather than invent a
+plausible-sounding flow. Verified fixed: the same request now correctly
+responds that no checkout capability exists. This is now a candidate test
+case for the eval harness — "does the agent stay within its real tool
+boundaries" is a measurable, repeatable check worth automating.
+
+**Multi-provider resilience:** added Groq (openai/gpt-oss-120b) as an
+automatic fallback when Gemini's free-tier daily quota (20 requests/day) is
+exhausted or the service returns repeated 503s. The fallback required
+translating between two different function-calling schemas (Gemini's
+`types.Tool` format vs. Groq's OpenAI-compatible `tools=[...]` format) and
+normalizing both providers' responses into one consistent shape before the
+rest of the graph consumes them — the graph itself doesn't know or care
+which provider actually answered.
