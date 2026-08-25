@@ -173,3 +173,14 @@ translating between two different function-calling schemas (Gemini's
 normalizing both providers' responses into one consistent shape before the
 rest of the graph consumes them — the graph itself doesn't know or care
 which provider actually answered.
+
+**Fabricated tool-output shape (caught via testing):** when summarizing a
+`check_availability` result, the model displayed a JSON block with fields
+`available` and `stock_quantity` — but the tool actually returns `in_stock`
+and `qty`. The final English sentence happened to be correct, but the
+"raw output" shown to the user was fabricated to look plausible rather than
+copied from the real result. This is a subtler version of the earlier
+hallucinated-checkout bug: even with correct final answers, a model can
+invent supporting detail that looks authoritative but isn't real. Flagged as
+a concrete test case for the eval harness — comparing displayed tool output
+against the actual tool schema is a measurable, automatable check.
