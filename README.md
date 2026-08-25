@@ -184,3 +184,19 @@ hallucinated-checkout bug: even with correct final answers, a model can
 invent supporting detail that looks authoritative but isn't real. Flagged as
 a concrete test case for the eval harness — comparing displayed tool output
 against the actual tool schema is a measurable, automatable check.
+
+**Tool-choice inconsistency across calls (caught via web backend testing):**
+the streaming "final answer" call to Groq omitted the tools list entirely,
+assuming that meant "no tool use." In practice, the model independently
+decided to attempt a tool call anyway on that separate request, and Groq's
+API rejected the response outright with `Tool choice is none, but model
+called a tool`. Root cause: two separate calls to the same provider, each
+with a different, implicit view of whether tools were available, with no
+explicit agreement between them. Fixed by passing `tools=groq_tools` together
+with `tool_choice="none"` on the streaming call — explicitly stating "these
+tools exist, but you may not use them right now" rather than omitting them
+and hoping. This bug only surfaced under the FastAPI backend, not the
+terminal version, because the web request that triggered it lacked the
+multi-turn context that normally keeps the model from reconsidering a tool
+call mid-stream — a good example of how a system that appears correct in one
+interface can fail under different real-world usage patterns.
