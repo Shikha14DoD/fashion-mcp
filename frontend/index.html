@@ -1,0 +1,40 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Fashion Stylist Assistant</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div class="app">
+    <header class="app-header">
+      <h1>Fashion Stylist Assistant</h1>
+      <button id="new-session-btn" title="Start a new conversation">New chat</button>
+    </header>
+
+    <main id="chat-window" class="chat-window" aria-live="polite">
+      <div class="message assistant">
+        <div class="bubble">
+          Hi! Tell me what you're shopping for — an occasion, a budget, colours
+          to avoid — and I'll search the catalog for you.
+        </div>
+      </div>
+    </main>
+
+    <form id="chat-form" class="chat-form">
+      <input
+        id="chat-input"
+        type="text"
+        autocomplete="off"
+        placeholder="e.g. something for an outdoor September wedding, under $200"
+        aria-label="Message"
+      />
+      <button type="submit" id="send-btn">Send</button>
+    </form>
+  </div>
+
+  <script src="config.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
