@@ -46,8 +46,6 @@ def _call_groq_fallback(gemini_messages, groq_tools):
     return response
 
 def _call_llm_with_fallback(gemini_messages, gemini_tools, groq_tools, max_retries=3):
-    """Try Gemini first (with retry on transient 503s). Fall back to Groq on
-    quota exhaustion (429) or repeated Gemini failure."""
     for attempt in range(max_retries):
         try:
             response = _client.models.generate_content(
@@ -59,7 +57,11 @@ def _call_llm_with_fallback(gemini_messages, gemini_tools, groq_tools, max_retri
             if part.function_call:
                 return {"provider": "gemini", "tool_name": part.function_call.name,
                         "tool_args": dict(part.function_call.args)}
-            return {"provider": "gemini", "text": part.text}
+            # no tool call — re-stream just the text for a responsive feel
+            text = stream_gemini_text(gemini_messages)
+            if not text.strip():
+                text = "I'm not sure how to respond to that — could you rephrase?"
+            return {"provider": "gemini", "text": text}
 
         except ClientError as e:
             if "RESOURCE_EXHAUSTED" in str(e):
@@ -72,13 +74,54 @@ def _call_llm_with_fallback(gemini_messages, gemini_tools, groq_tools, max_retri
                 break
             time.sleep(2 ** attempt)
 
-    groq_response = _call_groq_fallback(gemini_messages, groq_tools)
+    groq_messages = [
+        {"role": "user" if m["role"] == "user" else "assistant", "content": m["parts"][0]["text"]}
+        for m in gemini_messages
+    ]
+    groq_response = _groq_client.chat.completions.create(
+        model="openai/gpt-oss-120b",
+        messages=groq_messages,
+        tools=groq_tools,
+    )
     msg = groq_response.choices[0].message
     if msg.tool_calls:
         call = msg.tool_calls[0]
         return {"provider": "groq", "tool_name": call.function.name,
                 "tool_args": json.loads(call.function.arguments)}
-    return {"provider": "groq", "text": msg.content}
+    text = stream_groq_text(groq_messages)
+    if not text.strip():
+        text = "I'm not sure how to respond to that — could you rephrase?"
+    return {"provider": "groq", "text": text}
+
+def stream_gemini_text(gemini_messages):
+    """Stream a plain-text response from Gemini, printing as it arrives."""
+    full_text = ""
+    stream = _client.models.generate_content_stream(
+        model="gemini-flash-latest",
+        contents=gemini_messages,
+    )
+    for chunk in stream:
+        if chunk.text:
+            print(chunk.text, end="", flush=True)
+            full_text += chunk.text
+    print()
+    return full_text
+
+def stream_groq_text(groq_messages):
+    """Stream a plain-text response from Groq, printing as it arrives."""
+    full_text = ""
+    stream = _groq_client.chat.completions.create(
+        model="openai/gpt-oss-120b",
+        messages=groq_messages,
+        stream=True,
+    )
+    for chunk in stream:
+        delta = chunk.choices[0].delta.content
+        if delta:
+            print(delta, end="", flush=True)
+            full_text += delta
+    print()
+    return full_text
 
 def make_agent_node(gemini_tools, groq_tools):
     """Returns a node function with both providers' tool schemas already baked in."""
@@ -141,10 +184,15 @@ def make_tools_node(session):
 
     return tools_node
 
+from langgraph.types import interrupt
+
 def confirm_node(state):
     action = state["pending_action"]
-    print(f"\n⚠️  The assistant wants to: {action['tool']} with {action['args']}")
-    answer = input("Approve this action? (yes/no): ").strip().lower()
+    answer = interrupt({
+        "type": "confirmation_required",
+        "tool": action["tool"],
+        "args": action["args"],
+    })
 
     if answer in ("yes", "y"):
         return {"pending_action": {**action, "approved": True}}

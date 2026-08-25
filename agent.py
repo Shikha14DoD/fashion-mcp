@@ -3,7 +3,8 @@ from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
 from google.genai import types
 from langgraph.graph import StateGraph, END
-
+from langgraph.checkpoint.memory import InMemorySaver
+from langgraph.types import Command
 from graph_state import AgentState
 from graph_nodes import make_agent_node, make_tools_node, confirm_node, mcp_tools_to_groq_schema
 
@@ -52,7 +53,9 @@ async def main():
             graph.add_conditional_edges("confirm", route_after_confirm,
                                          {"tools": "tools", "agent": "agent"})
 
-            app = graph.compile()
+            checkpointer = InMemorySaver()
+            app = graph.compile(checkpointer=checkpointer)
+            config = {"configurable": {"thread_id": "terminal-session"}}
 
             print("Fashion styling assistant (LangGraph). Type 'quit' to exit.\n")
             api_key = "demo_key_123"
@@ -66,10 +69,19 @@ async def main():
                     continue
 
                 state["messages"].append({"role": "user", "content": user_input})
-                state = await app.ainvoke(state)
+                result = await app.ainvoke(state, config=config)
 
+
+                if "__interrupt__" in result:
+                    interrupt_data = result["__interrupt__"][0].value
+                    print(f"\n⚠️  The assistant wants to: {interrupt_data['tool']} with {interrupt_data['args']}")
+                    answer = input("Approve this action? (yes/no): ").strip().lower()
+                    result = await app.ainvoke(Command(resume=answer), config=config)
+
+                state = result
                 last = state["messages"][-1]
-                print(f"Assistant: {last.content}\n")
+                if last.content.strip():
+                    print()  # spacing after the streamed text, which has no trailing newline gap
 
 if __name__ == "__main__":
     asyncio.run(main())
