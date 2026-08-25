@@ -88,7 +88,7 @@ def _call_llm_with_fallback(gemini_messages, gemini_tools, groq_tools, max_retri
         call = msg.tool_calls[0]
         return {"provider": "groq", "tool_name": call.function.name,
                 "tool_args": json.loads(call.function.arguments)}
-    text = stream_groq_text(groq_messages)
+    text = stream_groq_text(groq_messages, groq_tools)
     if not text.strip():
         text = "I'm not sure how to respond to that — could you rephrase?"
     return {"provider": "groq", "text": text}
@@ -107,14 +107,17 @@ def stream_gemini_text(gemini_messages):
     print()
     return full_text
 
-def stream_groq_text(groq_messages):
+def stream_groq_text(groq_messages, groq_tools):
     """Stream a plain-text response from Groq, printing as it arrives."""
     full_text = ""
     stream = _groq_client.chat.completions.create(
         model="openai/gpt-oss-120b",
         messages=groq_messages,
+        tools=groq_tools,
+        tool_choice="none",
         stream=True,
     )
+
     for chunk in stream:
         delta = chunk.choices[0].delta.content
         if delta:
