@@ -221,6 +221,29 @@ fix: it's a genuine reliability gap between the two providers, and the kind
 of thing an eval harness comparing task success rate per-provider would catch
 automatically instead of requiring a human to notice the wording felt off.
 
+**A hang, not an error, defeating the whole multi-provider fallback (caught
+the next day, when Gemini's API itself started hanging instead of
+returning an error):** `_call_llm_with_fallback` only ever caught explicit
+`ClientError`/`ServerError` exceptions from the Gemini SDK, on the
+assumption that a broken Gemini call would always come back as one of
+those. It doesn't: with no client-side timeout configured, a Gemini request
+that simply never returns hangs the whole request indefinitely, since a
+hang isn't an exception at all, there's nothing to catch. Confirmed by
+calling the Gemini SDK directly outside the app entirely, in isolation, and
+watching it hang past 30 seconds with no error. Worse, adding a timeout via
+the client constructor's `http_options` turned out not to be enough either:
+passing a `config=` object on the actual `generate_content` call (needed to
+pass `tools`) silently ignores the client-level default, falls back to some
+much longer internal default, and raises a raw `httpx.ReadTimeout` when it
+finally does give up, an exception type the existing handler never expected.
+Fixed by setting `http_options` explicitly on every `GenerateContentConfig`
+passed to the SDK, not just on the client, and by also catching
+`httpx.TimeoutException` alongside `ServerError` so a timeout falls back to
+Groq exactly like an explicit 5xx does. The lesson: an SDK's per-call config
+object can silently override a client-level default instead of falling back
+to it, so "I set it once at the top" isn't something to trust without
+checking each call site that takes its own config.
+
 ## Evaluation harness
 
 `eval_harness.py` drives the agent through its real HTTP API

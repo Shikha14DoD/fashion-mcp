@@ -1,6 +1,7 @@
 import os
 import time
 import json
+import httpx
 from dotenv import load_dotenv
 from google import genai
 from google.genai import types
@@ -25,7 +26,11 @@ Critically:
 load_dotenv()
 _groq_client = Groq(api_key=os.environ["GROQ_API_KEY"])
 
-_client = genai.Client(api_key=os.environ["GEMINI_API_KEY"])
+GEMINI_TIMEOUT_MS = 15000  # a hang here would otherwise never trigger the Groq fallback below
+_client = genai.Client(
+    api_key=os.environ["GEMINI_API_KEY"],
+    http_options=types.HttpOptions(timeout=GEMINI_TIMEOUT_MS),
+)
 
 WRITE_TOOLS = {"save_to_wishlist"}  # tools that require human confirmation
 
@@ -67,7 +72,10 @@ def _call_llm_with_fallback(gemini_messages, gemini_tools, groq_tools, max_retri
             response = _client.models.generate_content(
                 model="gemini-flash-latest",
                 contents=gemini_messages,
-                config=types.GenerateContentConfig(tools=gemini_tools),
+                config=types.GenerateContentConfig(
+                    tools=gemini_tools,
+                    http_options=types.HttpOptions(timeout=GEMINI_TIMEOUT_MS),
+                ),
             )
             part = response.candidates[0].content.parts[0]
             if part.function_call:
@@ -84,7 +92,9 @@ def _call_llm_with_fallback(gemini_messages, gemini_tools, groq_tools, max_retri
                 print("[Gemini quota exhausted — falling back to Groq]")
                 break
             raise
-        except ServerError:
+        except (ServerError, httpx.TimeoutException):
+            # A hang should fall back exactly like an explicit 5xx does - the
+            # SDK doesn't always convert a timeout into a ServerError itself.
             if attempt == max_retries - 1:
                 print("[Gemini unavailable after retries — falling back to Groq]")
                 break
@@ -118,6 +128,9 @@ def stream_gemini_text(gemini_messages):
     stream = _client.models.generate_content_stream(
         model="gemini-flash-latest",
         contents=gemini_messages,
+        config=types.GenerateContentConfig(
+            http_options=types.HttpOptions(timeout=GEMINI_TIMEOUT_MS),
+        ),
     )
     for chunk in stream:
         if chunk.text:
