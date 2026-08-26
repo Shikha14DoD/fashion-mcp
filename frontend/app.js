@@ -97,6 +97,18 @@ async function ensureSession() {
   sessionStorage.setItem("fashion_mcp_session_id", sessionId);
 }
 
+async function ensureSessionWithRetry(attempts = 4, delayMs = 5000) {
+  for (let i = 0; i < attempts; i++) {
+    try {
+      await ensureSession();
+      return;
+    } catch (err) {
+      if (i === attempts - 1) throw err;
+      await new Promise((resolve) => setTimeout(resolve, delayMs));
+    }
+  }
+}
+
 async function startNewSession() {
   sessionStorage.removeItem("fashion_mcp_session_id");
   chatWindow.innerHTML = "";
@@ -151,6 +163,9 @@ async function sendMessage(text) {
   const typingRow = appendTyping();
   setInputEnabled(false);
   try {
+    if (!sessionId) {
+      await ensureSession();
+    }
     const res = await fetch(`${API_BASE}/chat`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -184,10 +199,14 @@ newSessionBtn.addEventListener("click", () => {
 (async function init() {
   setInputEnabled(false);
   try {
-    await ensureSession();
-    setInputEnabled(true);
+    await ensureSessionWithRetry();
     chatInput.focus();
   } catch (err) {
-    appendMessage("error", `Couldn't reach the backend at ${API_BASE}: ${err.message}`);
+    appendMessage(
+      "error",
+      `Having trouble reaching the backend at ${API_BASE} (it may still be waking up — free-tier cold start). Go ahead and try sending a message anyway.`
+    );
+  } finally {
+    setInputEnabled(true);
   }
 })();
