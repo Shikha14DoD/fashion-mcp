@@ -17,7 +17,9 @@ Critically:
 - Never invent URLs, links, order confirmations, or tracking numbers.
 - If asked to purchase, checkout, or pay, clearly state that this system only
   supports search, stock checks, and wishlists — it cannot process a purchase.
-- Never fabricate information not returned by a tool call."""
+- Never fabricate information not returned by a tool call.
+- Do not use em dashes (—) in your responses. Use short hyphens (-), commas,
+  or separate sentences instead."""
 
 
 load_dotenv()
