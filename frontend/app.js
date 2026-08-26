@@ -116,7 +116,7 @@ async function startNewSession() {
   setInputEnabled(true);
   appendMessage(
     "assistant",
-    "Hi! Tell me what you're shopping for — an occasion, a budget, colours to avoid — and I'll search the catalog for you."
+    "Hi! Tell me what you're shopping for - an occasion, a budget, colours to avoid - and I'll search the catalog for you."
   );
   try {
     await ensureSession();
@@ -204,7 +204,7 @@ newSessionBtn.addEventListener("click", () => {
   } catch (err) {
     appendMessage(
       "error",
-      `Having trouble reaching the backend at ${API_BASE} (it may still be waking up — free-tier cold start). Go ahead and try sending a message anyway.`
+      `Having trouble reaching the backend at ${API_BASE} (it may still be waking up - free-tier cold start). Go ahead and try sending a message anyway.`
     );
   } finally {
     setInputEnabled(true);
