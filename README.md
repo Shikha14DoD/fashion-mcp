@@ -119,18 +119,17 @@ mcp dev server.py       # launch MCP Inspector to test tools
 
 ## Roadmap
 
-## Roadmap
-
 - [x] `get_care_instructions` tool
 - [x] Rate limiting on write actions
 - [x] Real MCP client-server connection (not a direct import)
 - [x] Gemini function-calling: LLM selects the correct tool and arguments
 - [x] Execute the tool call Gemini requests and feed results back
-- [ ] Multi-turn conversation loop
-- [ ] LangGraph state machine with human-in-the-loop confirmation gate
-- [ ] Simple chat UI
+- [x] Multi-turn conversation loop
+- [x] LangGraph state machine with human-in-the-loop confirmation gate
+- [x] Simple chat UI
+- [x] Public deployment (Render)
 - [ ] Evaluation harness (task success rate, groundedness)
-- [ ] Public deployment + demo GIF
+- [ ] Demo GIF
 
 
 - [x] Rate limiting on write actions
