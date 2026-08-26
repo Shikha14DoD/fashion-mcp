@@ -111,7 +111,7 @@ def _call_llm_with_fallback(gemini_messages, gemini_tools, groq_tools, max_retri
     return {"provider": "groq", "text": text}
 
 def stream_gemini_text(gemini_messages):
-    """Stream a plain-text response from Gemini, printing as it arrives."""
+    """Stream a plain-text response from Gemini."""
     full_text = ""
     stream = _client.models.generate_content_stream(
         model="gemini-flash-latest",
@@ -119,13 +119,11 @@ def stream_gemini_text(gemini_messages):
     )
     for chunk in stream:
         if chunk.text:
-            print(chunk.text, end="", flush=True)
             full_text += chunk.text
-    print()
     return full_text
 
 def stream_groq_text(groq_messages, groq_tools):
-    """Stream a plain-text response from Groq, printing as it arrives."""
+    """Stream a plain-text response from Groq."""
     full_text = ""
     stream = _groq_client.chat.completions.create(
         model="openai/gpt-oss-120b",
@@ -138,9 +136,7 @@ def stream_groq_text(groq_messages, groq_tools):
     for chunk in stream:
         delta = chunk.choices[0].delta.content
         if delta:
-            print(delta, end="", flush=True)
             full_text += delta
-    print()
     return full_text
 
 def make_agent_node(gemini_tools, groq_tools):

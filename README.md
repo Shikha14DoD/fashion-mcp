@@ -236,3 +236,16 @@ in `graph_nodes.py`) before it's turned into Gemini/Groq tool definitions,
 while `tools_node` keeps injecting the real, session-bound key server-side
 exactly as it always did. The MCP tool's actual schema is untouched, so
 calling it directly (MCP Inspector, etc.) still correctly demands a key.
+
+**Streaming helpers crashing on ordinary model output (caught seconds after
+the fix above, testing the confirmation gate for the first time):**
+`stream_gemini_text` and `stream_groq_text` both had a `print(delta, end="",
+flush=True)` left over from before `web_server.py` existed, when this agent
+only ran in a terminal. On Windows, stdout defaults to `cp1252`, which can't
+encode a fair amount of ordinary Unicode — in this case a narrow no-break
+space the model put before a dollar amount. That raised a plain
+`UnicodeEncodeError`, not a `GroqAPIError`, so it went straight past the
+error handling added above and 500'd the request outright. Fixed by deleting
+both print calls: `web_server.py` only ever reads the function's return
+value, never stdout, so they'd been dead weight since the web backend was
+added — and dead weight that could crash a request.
