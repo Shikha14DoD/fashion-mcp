@@ -6,7 +6,7 @@ from google import genai
 from google.genai import types
 from google.genai.errors import ServerError, ClientError
 from groq import Groq
-from groq import APIStatusError as GroqAPIError
+from groq import APIError as GroqAPIError
 
 SYSTEM_PROMPT = """You are a styling assistant for a fashion catalog. You have
 access to exactly four tools: search_garments, check_availability,
@@ -88,7 +88,10 @@ def _call_llm_with_fallback(gemini_messages, gemini_tools, groq_tools, max_retri
         call = msg.tool_calls[0]
         return {"provider": "groq", "tool_name": call.function.name,
                 "tool_args": json.loads(call.function.arguments)}
-    text = stream_groq_text(groq_messages, groq_tools)
+    try:
+        text = stream_groq_text(groq_messages, groq_tools)
+    except GroqAPIError:
+        text = "I had trouble generating a response there — could you try rephrasing, or ask again?"
     if not text.strip():
         text = "I'm not sure how to respond to that — could you rephrase?"
     return {"provider": "groq", "text": text}

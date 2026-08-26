@@ -200,3 +200,24 @@ terminal version, because the web request that triggered it lacked the
 multi-turn context that normally keeps the model from reconsidering a tool
 call mid-stream — a good example of how a system that appears correct in one
 interface can fail under different real-world usage patterns.
+
+**Same Groq error resurfacing in production (caught on first live Render
+deploy):** even after the `tool_choice="none"` fix above, the identical
+`Tool choice is none, but model called a tool` error showed up again once the
+app was deployed — this time raised as `groq.APIError` from inside the
+streaming response parser itself. Turns out `tool_choice="none"` tells the
+API what's allowed, but doesn't stop the underlying model
+(`openai/gpt-oss-120b`) from occasionally emitting a tool-call-shaped output
+anyway; Groq's client detects the mismatch mid-stream and raises rather than
+silently dropping it. The request survived this first time only because
+LangGraph retries a failed node once automatically, and the retry happened
+not to trigger the same behavior — not something to depend on. Fixed by
+wrapping the streaming call in a `try/except` on `groq.APIError` and
+returning a plain apologetic message on failure, so a model-level quirk
+degrades to a normal chat reply instead of a 500 the frontend sees as a
+network failure. Also caught a related mistake while adding this: the file
+already imported a Groq error type aliased as `GroqAPIError`, but it pointed
+at `APIStatusError`, a subclass of the actual exception being raised
+(`APIError`) — so the obvious `except GroqAPIError` would silently have
+missed it. Worth remembering: an unused defensive import can be as wrong as
+having no import at all if nothing ever exercises it.
