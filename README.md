@@ -42,6 +42,13 @@ first.
 
 # Fashion MCP — Authenticated Styling Agent
 
+**Live demo:** [fashion-mcp-frontend.onrender.com](https://fashion-mcp-frontend.onrender.com)
+**Backend API:** [fashion-mcp-backend.onrender.com](https://fashion-mcp-backend.onrender.com)
+
+Both are on Render's free tier and spin down after ~15 minutes idle, so the
+first request after a lull can take 20-30s to wake up — that's a cold start,
+not a bug.
+
 An MCP server exposing typed, authenticated tools over a real fashion product
 catalog (44k+ garments), with audit logging on every call. A LangGraph agent
 sits on top, handling multi-turn styling requests with a human-confirmation
