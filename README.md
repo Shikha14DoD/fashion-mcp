@@ -221,6 +221,36 @@ fix: it's a genuine reliability gap between the two providers, and the kind
 of thing an eval harness comparing task success rate per-provider would catch
 automatically instead of requiring a human to notice the wording felt off.
 
+## Evaluation harness
+
+`eval_harness.py` drives the agent through its real HTTP API
+(`/session`, `/chat`, `/confirm`) — the same interface a browser client
+uses — and checks each response against ground truth pulled directly from
+the same database via the MCP tool functions. It isn't just checking that
+the agent replies; it's checking the reply is *true*: a search response
+must contain a real price from the catalog, an availability answer must
+match the real stock quantity, care instructions must overlap with the
+real `CARE_MAP` entry, and the wishlist confirmation gate must fire with
+the correct args and no leaked `api_key` — several of these are the exact
+failure modes documented above (hallucinated checkout, fabricated tool
+output, the api_key leak), turned into repeatable checks instead of things
+a human has to happen to notice.
+
+```bash
+python eval_harness.py --base-url http://127.0.0.1:8000
+# or against the live deploy:
+python eval_harness.py --base-url https://fashion-mcp-backend.onrender.com
+```
+
+Building this surfaced its own lesson: the first run showed 2 false
+failures, not real bugs — one check required a straight apostrophe and
+missed the model's curly `'`, the other required an exact phrase match
+where the model had (correctly) paraphrased the real care instructions.
+Fixed by matching on apostrophe-agnostic patterns and keyword overlap
+instead of exact substrings — a reminder that an eval harness needs almost
+as much care against false failures as the product code needs against real
+ones.
+
 ## Running locally
 
 ```bash
@@ -245,7 +275,7 @@ mcp dev server.py       # launch MCP Inspector to test tools
 - [x] LangGraph state machine with human-in-the-loop confirmation gate
 - [x] Simple chat UI
 - [x] Public deployment (Render)
-- [ ] Evaluation harness (task success rate, groundedness)
+- [x] Evaluation harness (task success rate, groundedness)
 - [ ] Demo GIF
 
 Note: rate limiting is in-memory (5 calls/60s per user) — resets on server
