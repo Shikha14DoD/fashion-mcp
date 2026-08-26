@@ -70,7 +70,7 @@ def _call_llm_with_fallback(gemini_messages, gemini_tools, groq_tools, max_retri
     for attempt in range(max_retries):
         try:
             response = _client.models.generate_content(
-                model="gemini-flash-latest",
+                model="gemini-3.6-flash",
                 contents=gemini_messages,
                 config=types.GenerateContentConfig(
                     tools=gemini_tools,
@@ -126,7 +126,7 @@ def stream_gemini_text(gemini_messages):
     """Stream a plain-text response from Gemini."""
     full_text = ""
     stream = _client.models.generate_content_stream(
-        model="gemini-flash-latest",
+        model="gemini-3.6-flash",
         contents=gemini_messages,
         config=types.GenerateContentConfig(
             http_options=types.HttpOptions(timeout=GEMINI_TIMEOUT_MS),

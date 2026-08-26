@@ -244,6 +244,24 @@ object can silently override a client-level default instead of falling back
 to it, so "I set it once at the top" isn't something to trust without
 checking each call site that takes its own config.
 
+**"20 requests/day" turned out to be true, just not for the model name
+implied (caught while trying to work around persistent quota exhaustion):**
+the model string used everywhere was `"gemini-flash-latest"`, an alias
+Google repoints to whatever's newest. Catching the full 429 response body
+(not just the summary message) showed it currently resolves to
+`gemini-3.7-flash`, a newly released model still on a much stricter
+free-tier daily quota than an established model gets - the 20/day figure
+documented above was accurate, just for a model that changes out from under
+the code without a code change. The quota is also strictly per-model
+(`GenerateRequestsPerDayPerProjectPerModel-FreeTier`), so a different model
+name gets its own completely separate, unused daily allowance - it doesn't
+matter that "flash" already ran out. Pinned to `gemini-3.6-flash` explicitly
+instead: an older, more established model with much more free-tier
+headroom, at the cost of not automatically riding along to whatever's
+newest. A `"latest"` alias is convenient until the day it silently moves
+you onto a model with different rate limits, different pricing, or
+different behavior entirely - worth knowing before depending on one.
+
 ## Evaluation harness
 
 `eval_harness.py` drives the agent through its real HTTP API
