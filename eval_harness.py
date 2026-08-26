@@ -20,7 +20,16 @@ import requests
 
 import server
 
-RETRYABLE_PHRASES = ("technical issue", "technical problem", "try again")
+# Agent responses routinely contain Unicode (curly quotes, non-breaking
+# hyphens, etc.) that a Windows console's default cp1252 encoding can't
+# print. Report it visibly instead of crashing the harness over it.
+sys.stdout.reconfigure(errors="backslashreplace")
+
+RETRYABLE_PHRASES = (
+    "technical issue", "technical problem", "try again",
+    "unable to connect", "not able to retrieve", "isn't able to retrieve",
+    "encountering a technical", "check back", "trouble generating a response",
+)
 
 
 def new_session(base_url):
@@ -29,8 +38,8 @@ def new_session(base_url):
     return r.json()["session_id"]
 
 
-def chat(base_url, session_id, message, retries=1):
-    """POST /chat, retrying once if the fallback model gave a known-flaky non-answer."""
+def chat(base_url, session_id, message, retries=3):
+    """POST /chat, retrying if the fallback model gave a known-flaky non-answer."""
     last = None
     for attempt in range(retries + 1):
         r = requests.post(f"{base_url}/chat", json={"session_id": session_id, "message": message}, timeout=60)
