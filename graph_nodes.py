@@ -27,6 +27,20 @@ _client = genai.Client(api_key=os.environ["GEMINI_API_KEY"])
 
 WRITE_TOOLS = {"save_to_wishlist"}  # tools that require human confirmation
 
+# Args the client injects itself (e.g. the authenticated user's api_key in
+# tools_node below) and that the LLM should never be asked to supply.
+HIDDEN_ARGS = {"api_key"}
+
+def strip_hidden_args(schema):
+    """Remove server-injected args from a tool's schema before it's shown to the LLM."""
+    schema = dict(schema)
+    schema["properties"] = {
+        k: v for k, v in schema.get("properties", {}).items() if k not in HIDDEN_ARGS
+    }
+    if "required" in schema:
+        schema["required"] = [r for r in schema["required"] if r not in HIDDEN_ARGS]
+    return schema
+
 class QuotaExhausted(Exception):
     """Raised when the Gemini free-tier daily quota is used up."""
     pass
@@ -217,6 +231,6 @@ def mcp_tools_to_groq_schema(mcp_tools):
         "function": {
             "name": t.name,
             "description": t.description,
-            "parameters": t.input_schema,
+            "parameters": strip_hidden_args(t.input_schema),
         },
     } for t in mcp_tools]

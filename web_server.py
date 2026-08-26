@@ -10,7 +10,7 @@ from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.types import Command
 
 from graph_state import AgentState
-from graph_nodes import make_agent_node, make_tools_node, confirm_node, mcp_tools_to_groq_schema
+from graph_nodes import make_agent_node, make_tools_node, confirm_node, mcp_tools_to_groq_schema, strip_hidden_args
 
 app = FastAPI()
 app.add_middleware(
@@ -51,7 +51,7 @@ async def startup():
 
     mcp_tools = await _session.list_tools()
     gemini_tools = [types.Tool(function_declarations=[
-        types.FunctionDeclaration(name=t.name, description=t.description, parameters=t.input_schema)
+        types.FunctionDeclaration(name=t.name, description=t.description, parameters=strip_hidden_args(t.input_schema))
         for t in mcp_tools.tools
     ])]
     groq_tools = mcp_tools_to_groq_schema(mcp_tools.tools)

@@ -221,3 +221,18 @@ at `APIStatusError`, a subclass of the actual exception being raised
 (`APIError`) — so the obvious `except GroqAPIError` would silently have
 missed it. Worth remembering: an unused defensive import can be as wrong as
 having no import at all if nothing ever exercises it.
+
+**LLM asking the user for a secret it was never meant to have (caught on the
+first real confirmation-gate test):** `save_to_wishlist(api_key, garment_id)`
+correctly requires `api_key` in its MCP schema — a direct MCP client has no
+other way to authenticate. But that same schema was handed straight to
+Gemini and Groq as the tool's definition, so the model saw `api_key` as a
+required argument it had no value for and asked the user to provide one,
+instead of calling the tool. The result: the human-confirmation gate — the
+one feature this whole project is built around — had never actually fired in
+the deployed app, because the write tool never got far enough to trigger it.
+Fixed by stripping `api_key` out of the schema shown to the LLM (`strip_hidden_args`
+in `graph_nodes.py`) before it's turned into Gemini/Groq tool definitions,
+while `tools_node` keeps injecting the real, session-bound key server-side
+exactly as it always did. The MCP tool's actual schema is untouched, so
+calling it directly (MCP Inspector, etc.) still correctly demands a key.
