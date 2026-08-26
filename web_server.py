@@ -1,3 +1,4 @@
+import asyncio
 import uuid
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -32,6 +33,8 @@ _session_cm = None
 _session = None
 checkpointer = InMemorySaver()
 
+MCP_STARTUP_TIMEOUT_S = 30  # a hung subprocess handshake should fail loudly, not stall the deploy's health check
+
 class ChatRequest(BaseModel):
     session_id: str
     message: str
@@ -40,16 +43,26 @@ class ConfirmRequest(BaseModel):
     session_id: str
     answer: str
 
-@app.on_event("startup")
-async def startup():
-    global _graph_app, _session_cm, _session
+async def _connect_mcp():
+    global _session_cm, _session
     _session_cm = stdio_client(server_params)
     read, write = await _session_cm.__aenter__()
     _session = ClientSession(read, write)
     await _session.__aenter__()
     await _session.initialize()
+    return await _session.list_tools()
 
-    mcp_tools = await _session.list_tools()
+@app.on_event("startup")
+async def startup():
+    global _graph_app
+    try:
+        mcp_tools = await asyncio.wait_for(_connect_mcp(), timeout=MCP_STARTUP_TIMEOUT_S)
+    except asyncio.TimeoutError as e:
+        raise RuntimeError(
+            f"MCP server subprocess didn't respond within {MCP_STARTUP_TIMEOUT_S}s - "
+            "failing startup instead of hanging the deploy's health check"
+        ) from e
+
     gemini_tools = [types.Tool(function_declarations=[
         types.FunctionDeclaration(name=t.name, description=t.description, parameters=strip_hidden_args(t.input_schema))
         for t in mcp_tools.tools

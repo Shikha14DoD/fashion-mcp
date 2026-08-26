@@ -262,6 +262,20 @@ newest. A `"latest"` alias is convenient until the day it silently moves
 you onto a model with different rate limits, different pricing, or
 different behavior entirely - worth knowing before depending on one.
 
+**A hung deploy with zero diagnostic information (caught immediately after
+the fix above, on a Render redeploy):** the very next deploy failed with
+nothing but "Timed out" - no traceback, no log line, because
+`web_server.py`'s `startup()` spawns the MCP server subprocess and awaits
+its handshake with no timeout of its own. If that hangs, the app never
+finishes starting, so it never responds to Render's health check, and
+Render's own watchdog is the only thing that ever reports anything, with no
+insight into what actually got stuck. The same class of hang as the Gemini
+one above, just one layer lower in the stack. Fixed the same way: wrapped
+the MCP connection sequence in `asyncio.wait_for(..., timeout=30)` and raise
+a specific `RuntimeError` on timeout, so a stuck subprocess handshake fails
+fast with a real message in the logs instead of silently stalling the
+platform's own health check.
+
 ## Evaluation harness
 
 `eval_harness.py` drives the agent through its real HTTP API
