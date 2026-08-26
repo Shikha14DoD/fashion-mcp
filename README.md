@@ -17,9 +17,9 @@ authenticated (only a logged-in user can save to *their* wishlist) and every
 attempt — successful or not — is recorded in an audit log, the same way a
 real production system tracks who did what.
 
-3. The agent (in progress) — the "brain" that takes your plain-English
-request, decides which tools to call and in what order, and asks for your
-confirmation before doing anything permanent, like saving an item.
+3. The agent — the "brain" that takes your plain-English request, decides
+which tools to call and in what order, and asks for your confirmation before
+doing anything permanent, like saving an item.
 
 ### How a request flows through the system, end to end
 
@@ -44,13 +44,15 @@ first.
 
 An MCP server exposing typed, authenticated tools over a real fashion product
 catalog (44k+ garments), with audit logging on every call. A LangGraph agent
-(in progress) sits on top, handling multi-turn styling requests with a
-human-confirmation gate before any write action.
+sits on top, handling multi-turn styling requests with a human-confirmation
+gate before any write action — wrapped in a FastAPI backend and a browser
+chat UI, deployed live on Render.
 
-**Status: Stage 3 in progress** — MCP server complete with 4 tools, auth,
-audit logging, and rate limiting. Agent layer: MCP client connection working,
-Gemini function-calling verified. Tool execution loop and LangGraph state
-machine not yet built.
+**Status: Deployed** — MCP server complete with 4 tools, auth, audit
+logging, and rate limiting. Agent layer: multi-turn LangGraph state machine
+with Gemini/Groq fallback and a human-confirmation gate on write actions,
+served over a FastAPI backend with a browser chat frontend. Remaining: an
+evaluation harness and a demo GIF.
 
 ## Why this exists
 
@@ -75,7 +77,6 @@ per-user scoping, and an auditable action log — not just an LLM wrapper.
 
 Every call to `save_to_wishlist` is logged to `audit_log` — including failed
 auth attempts — with user id, arguments, result, and latency.
-
 
 ## Engineering notes
 
@@ -103,47 +104,6 @@ prompt.
 every query rather than at write time, so a standard database index can't be
 used on it. Fine at the current scale (44k rows) but would need an expression
 index or a precomputed normalized column at larger scale.
-
-## Running locally
-
-\`\`\`bash
-python -m venv .venv
-source .venv/bin/activate  # Windows: .venv\\Scripts\\activate
-pip install "psycopg[binary]" pandas python-dotenv pydantic "mcp[cli]"
-
-# .env file with DATABASE_URL=your_neon_connection_string
-
-python load_data.py     # one-time: load catalog into Postgres
-mcp dev server.py       # launch MCP Inspector to test tools
-\`\`\`
-
-## Roadmap
-
-- [x] `get_care_instructions` tool
-- [x] Rate limiting on write actions
-- [x] Real MCP client-server connection (not a direct import)
-- [x] Gemini function-calling: LLM selects the correct tool and arguments
-- [x] Execute the tool call Gemini requests and feed results back
-- [x] Multi-turn conversation loop
-- [x] LangGraph state machine with human-in-the-loop confirmation gate
-- [x] Simple chat UI
-- [x] Public deployment (Render)
-- [ ] Evaluation harness (task success rate, groundedness)
-- [ ] Demo GIF
-
-
-- [x] Rate limiting on write actions
-
-Note: Rate limiting is in-memory (5 calls/60s per user) — resets on
-server restart and wouldn't hold up across multiple server instances. A
-production version would use Redis for shared state.
-
-**Status: Stage 3 in progress** — full loop working: Gemini selects a tool,
-the agent executes it via the real MCP protocol, and results return
-successfully. Retry with exponential backoff added after hitting a real
-Gemini 503 during development. Multi-turn conversation and LangGraph state
-machine not yet built.
-
 
 **Transient API failures:** hit a real `503 UNAVAILABLE` from Gemini's free
 tier during development — not a bug, just temporary overload. Added retry
@@ -248,3 +208,46 @@ error handling added above and 500'd the request outright. Fixed by deleting
 both print calls: `web_server.py` only ever reads the function's return
 value, never stdout, so they'd been dead weight since the web backend was
 added — and dead weight that could crash a request.
+
+**Groq fallback reliability under real quota pressure (caught testing the
+live deploy):** once Gemini's free-tier daily quota (20 requests/day) ran out
+partway through testing, every turn fell back to Groq's `openai/gpt-oss-120b`
+for both the tool-selection step and the final-answer step. That model
+occasionally skipped calling `search_garments` entirely and returned a vague
+"technical issue accessing the catalog" reply instead — confirmed to not be a
+real error, since calling `search_garments` directly against the same
+database returned results immediately. Not something request parameters can
+fix: it's a genuine reliability gap between the two providers, and the kind
+of thing an eval harness comparing task success rate per-provider would catch
+automatically instead of requiring a human to notice the wording felt off.
+
+## Running locally
+
+```bash
+python -m venv .venv
+source .venv/bin/activate  # Windows: .venv\Scripts\activate
+pip install "psycopg[binary]" pandas python-dotenv pydantic "mcp[cli]"
+
+# .env file with DATABASE_URL=your_neon_connection_string
+
+python load_data.py     # one-time: load catalog into Postgres
+mcp dev server.py       # launch MCP Inspector to test tools
+```
+
+## Roadmap
+
+- [x] `get_care_instructions` tool
+- [x] Rate limiting on write actions
+- [x] Real MCP client-server connection (not a direct import)
+- [x] Gemini function-calling: LLM selects the correct tool and arguments
+- [x] Execute the tool call Gemini requests and feed results back
+- [x] Multi-turn conversation loop
+- [x] LangGraph state machine with human-in-the-loop confirmation gate
+- [x] Simple chat UI
+- [x] Public deployment (Render)
+- [ ] Evaluation harness (task success rate, groundedness)
+- [ ] Demo GIF
+
+Note: rate limiting is in-memory (5 calls/60s per user) — resets on server
+restart and wouldn't hold up across multiple server instances. A production
+version would use Redis for shared state.
