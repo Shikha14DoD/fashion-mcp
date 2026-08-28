@@ -26,7 +26,9 @@ Critically:
 load_dotenv()
 _groq_client = Groq(api_key=os.environ["GROQ_API_KEY"])
 
-GEMINI_TIMEOUT_MS = 15000  # a hang here would otherwise never trigger the Groq fallback below
+GEMINI_TIMEOUT_MS = 25000  # a hang here would otherwise never trigger the Groq fallback below;
+# 15s was tuned against local network latency and was cutting off real Render->Gemini
+# responses before they could finish, forcing an unnecessary fallback to the less reliable Groq path
 _client = genai.Client(
     api_key=os.environ["GEMINI_API_KEY"],
     http_options=types.HttpOptions(timeout=GEMINI_TIMEOUT_MS),

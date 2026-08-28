@@ -283,6 +283,22 @@ a specific `RuntimeError` on timeout, so a stuck subprocess handshake fails
 fast with a real message in the logs instead of silently stalling the
 platform's own health check.
 
+**The Gemini timeout was tuned for the wrong network (caught by reading
+Render's own logs, since local testing kept succeeding while the live
+deploy kept failing):** the 15s `GEMINI_TIMEOUT_MS` was set based on local
+testing, where Gemini consistently answered in 2-3 seconds. On Render,
+production logs showed `[Gemini unavailable after retries - falling back to
+Groq]` on requests that should have succeeded - meaning Gemini was timing
+out on every retry attempt specifically when called from Render's network,
+not hanging forever, just answering slower than 15s allowed for. The
+fallback logic itself was working exactly as designed; the timeout was just
+cutting off real, would-have-succeeded responses before they could finish,
+forcing an unnecessary fallback to the less reliable Groq path. Raised to
+25s. The debugging lesson: a timeout value tuned against one network path
+(a local machine) doesn't necessarily hold for another (a cloud host's
+route to the same API) - "it responds in 2s for me" isn't the same claim as
+"it responds in 2s from anywhere."
+
 ## Evaluation harness
 
 `eval_harness.py` drives the agent through its real HTTP API
