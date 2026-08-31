@@ -399,6 +399,28 @@ cleanly. This won't reach 100% - it's still a probabilistic model, just now
 sampled twice instead of once - but it directly reduces the exact failure
 mode observed, at effectively no cost.
 
+**"Groq isn't quota-scarce" was wrong - it has a real, tighter constraint
+than assumed: 8000 tokens per minute (caught by bumping retries to 3 and
+immediately triggering the exact cascading failure being fixed):**
+measuring a ~20-25% per-attempt miss rate on a bare "tshirts" query and
+reasoning "retries are free since Groq has no daily cap" led to raising the
+unforced-retry count from 1 to 3. Stress-testing that change surfaced a
+real `RateLimitError`: `tokens per minute (TPM): Limit 8000` on this
+account. Every retry re-sends the full conversation history and tool
+schemas, so tripling the attempts roughly tripled the token cost of every
+ambiguous turn - and the resulting rate-limit forced a fallback to Gemini,
+which was *also* mid-timeout at that exact moment, cascading into the
+"having trouble reaching my services" last-resort message. The system
+degraded exactly as designed under a genuine dual-provider failure; the
+bug was causing that failure in the first place by treating "not
+quota-limited" and "not rate-limited" as the same claim. Reverted to a
+single retry (2 attempts total). The lesson: "no daily request cap" is not
+the same property as "safe to call in a tight loop" - a provider can be
+scarce along an axis (tokens/minute) that a request-count framing misses
+entirely, and the fix for one constraint (Gemini's daily quota) doesn't
+transfer to a different constraint on a different provider without
+checking it actually holds.
+
 **The real root cause of most "technical issue" fabrications: a blank
 string looks exactly like a system failure to the model (caught by
 reproducing a user's real multi-turn conversation line by line until the

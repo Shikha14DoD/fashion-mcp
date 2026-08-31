@@ -61,10 +61,10 @@ def _groq_tool_decision(groq_messages, groq_tools):
 def _call_groq(groq_messages, groq_tools):
     msg = _groq_tool_decision(groq_messages, groq_tools)
     if not msg.tool_calls:
-        # Unforced retry: not forcing tool_choice, since that would wrongly push a
-        # tool call on turns that legitimately need none (e.g. the checkout decline).
-        # Just a second, independent sample at the same decision - cheap since Groq
-        # isn't quota-limited, and it recovers a real fraction of one-off misses.
+        # One unforced retry only: Groq has a real 8000 TPM budget on this account,
+        # and every retry re-sends the full conversation + tool schemas, so more
+        # attempts trade a lower per-turn miss rate for a real risk of rate-limiting
+        # the account, which cascades into needing Gemini too - a worse failure.
         msg = _groq_tool_decision(groq_messages, groq_tools)
     if msg.tool_calls:
         call = msg.tool_calls[0]
