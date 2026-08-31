@@ -316,6 +316,29 @@ a long-but-healthy wait doesn't read the same as a frozen page. The lesson
 repeats from the note above: fixing a timeout on one side of a request can
 just relocate the same unbounded-wait problem to the other side.
 
+**Retrying a persistently unavailable provider just multiplies the wait,
+it doesn't recover anything (caught via a user report and the backend's
+own logs, after a 2-day gap ruled out quota as the cause):** even with the
+client-side timeout above in place, a real request still timed out at 100
+seconds. The logs showed why: `[Gemini unavailable - falling back to Groq]`
+printed twice in a row for a single chat turn, each one representing a full
+3-attempt retry loop at the (now 25s) timeout plus backoff - up to ~78s -
+before ever reaching Groq. A single user turn makes at least two separate
+LLM calls (decide which tool to call, then write the final answer from the
+tool's result), and each one independently paid that same worst-case cost.
+Retrying only helps against genuinely transient failures; here Gemini was
+failing the same way on every attempt, so the retries were pure overhead,
+not resilience. Reduced `max_retries` from 3 to 1: try Gemini once, and
+fall back to Groq immediately on any failure. This does trade away
+recovering from a real transient 503 within the same call - the original
+motivation for retrying at all - but a persistent-unavailability scenario
+that compounds across every LLM call in a turn is the more damaging failure
+mode in practice, and Groq remains available as an immediate fallback
+either way. The broader lesson: a fix that's correct for one call in
+isolation (give Gemini a fair, longer timeout) can still be wrong in
+aggregate once you account for how many times it runs per user-visible
+action.
+
 ## Evaluation harness
 
 `eval_harness.py` drives the agent through its real HTTP API

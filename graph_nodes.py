@@ -68,7 +68,7 @@ def _call_groq_fallback(gemini_messages, groq_tools):
     )
     return response
 
-def _call_llm_with_fallback(gemini_messages, gemini_tools, groq_tools, max_retries=3):
+def _call_llm_with_fallback(gemini_messages, gemini_tools, groq_tools, max_retries=1):
     for attempt in range(max_retries):
         try:
             response = _client.models.generate_content(
@@ -98,7 +98,7 @@ def _call_llm_with_fallback(gemini_messages, gemini_tools, groq_tools, max_retri
             # A hang should fall back exactly like an explicit 5xx does - the
             # SDK doesn't always convert a timeout into a ServerError itself.
             if attempt == max_retries - 1:
-                print("[Gemini unavailable after retries — falling back to Groq]")
+                print("[Gemini unavailable — falling back to Groq]")
                 break
             time.sleep(2 ** attempt)
 
