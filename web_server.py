@@ -1,4 +1,5 @@
 import asyncio
+import time
 import uuid
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -12,6 +13,7 @@ from langgraph.types import Command
 
 from graph_state import AgentState
 from graph_nodes import make_agent_node, make_tools_node, confirm_node, mcp_tools_to_groq_schema, strip_hidden_args
+import graph_nodes
 
 app = FastAPI()
 app.add_middleware(
@@ -87,6 +89,24 @@ async def startup():
 @app.post("/session")
 def new_session():
     return {"session_id": str(uuid.uuid4())}
+
+@app.get("/debug/gemini")
+async def debug_gemini():
+    """Temporary: calls Gemini directly from this exact runtime so we can see
+    whether Render's network path to Gemini is the problem, independent of
+    the full agent pipeline. Remove once the Render-vs-local mystery is solved."""
+    def _call():
+        t0 = time.time()
+        try:
+            resp = graph_nodes._client.models.generate_content(
+                model="gemini-3.6-flash",
+                contents=[{"role": "user", "parts": [{"text": "say hi in 3 words"}]}],
+            )
+            return {"success": True, "seconds": round(time.time() - t0, 2), "text": resp.candidates[0].content.parts[0].text}
+        except Exception as e:
+            return {"success": False, "seconds": round(time.time() - t0, 2), "error_type": type(e).__name__, "error": str(e)[:500]}
+
+    return await asyncio.to_thread(_call)
 
 @app.post("/chat")
 async def chat(req: ChatRequest):
