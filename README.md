@@ -339,6 +339,26 @@ isolation (give Gemini a fair, longer timeout) can still be wrong in
 aggregate once you account for how many times it runs per user-visible
 action.
 
+**The real root cause of the recurring Gemini failures: every currently
+available free-tier model has the same tiny daily cap (caught with a
+temporary diagnostic endpoint, since Render's free tier has no shell
+access to test connectivity directly):** added a throwaway `/debug/gemini`
+route that called Gemini directly from the deployed instance and returned
+the raw result. It came back with `RESOURCE_EXHAUSTED`, `limit: 20`, for
+`gemini-3.6-flash` - the exact same 20/day ceiling as `gemini-3.7-flash`,
+the model pinning was meant to get away from. Google's generous 250
+requests/day free tier belongs to `gemini-2.5-flash`, a model this project
+can no longer even access (deprecated for new users, confirmed earlier).
+Every currently-available Gemini flash model apparently launches on the
+same restrictive 20/day introductory quota - there was no better model to
+pin to. This means Gemini isn't the reliable provider here at all: it's the
+scarce one, exhausted by any real usage in minutes, while Groq's fallback
+has stayed available and, in controlled side-by-side testing (5/5 and 3/3
+tool-calling trials), was performing more reliably than the intermittent
+live failures suggested. The debug route was removed once this was
+answered - it only existed to get visibility Render's free tier doesn't
+otherwise provide.
+
 ## Evaluation harness
 
 `eval_harness.py` drives the agent through its real HTTP API
