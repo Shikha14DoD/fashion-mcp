@@ -378,6 +378,27 @@ that phrasing - broadened the pattern rather than treating it as a real
 regression, since the actual agent behavior was right and only the test's
 pattern-matching was too narrow.
 
+**Groq being primary fixed availability, not per-request accuracy - those
+are different problems (caught immediately after the swap, on the very
+first live re-test):** a live request still failed right after the swap,
+with a plausible-sounding "wasn't able to retrieve any items" excuse. The
+logs showed something notable by its absence: no `[Groq unavailable...]`
+line at all - the API call itself succeeded, the model just chose not to
+call `search_garments` this particular time and fabricated an excuse for it
+instead of trying or admitting uncertainty. Not an infrastructure failure;
+genuine model non-determinism, the same class of issue as the hallucinated
+checkout flow. Since Groq isn't quota-scarce, this is cheap to mitigate: if
+the first tool-decision call comes back with no tool call, take one more
+independent, *unforced* sample at the same decision before falling through
+to a text response. Deliberately not `tool_choice="required"` - forcing a
+tool call would break the legitimate no-tool-needed cases (the checkout
+decline chief among them), so this only gives the model a second try at the
+same, unforced choice. Verified the checkout-decline test still passes
+after adding this, and 3/3 manual retries of the flagship query succeeded
+cleanly. This won't reach 100% - it's still a probabilistic model, just now
+sampled twice instead of once - but it directly reduces the exact failure
+mode observed, at effectively no cost.
+
 ## Evaluation harness
 
 `eval_harness.py` drives the agent through its real HTTP API

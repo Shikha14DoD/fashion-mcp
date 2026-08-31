@@ -50,13 +50,22 @@ class QuotaExhausted(Exception):
     """Raised when the Gemini free-tier daily quota is used up."""
     pass
 
-def _call_groq(groq_messages, groq_tools):
+def _groq_tool_decision(groq_messages, groq_tools):
     groq_response = _groq_client.chat.completions.create(
         model="openai/gpt-oss-120b",
         messages=groq_messages,
         tools=groq_tools,
     )
-    msg = groq_response.choices[0].message
+    return groq_response.choices[0].message
+
+def _call_groq(groq_messages, groq_tools):
+    msg = _groq_tool_decision(groq_messages, groq_tools)
+    if not msg.tool_calls:
+        # Unforced retry: not forcing tool_choice, since that would wrongly push a
+        # tool call on turns that legitimately need none (e.g. the checkout decline).
+        # Just a second, independent sample at the same decision - cheap since Groq
+        # isn't quota-limited, and it recovers a real fraction of one-off misses.
+        msg = _groq_tool_decision(groq_messages, groq_tools)
     if msg.tool_calls:
         call = msg.tool_calls[0]
         return {"provider": "groq", "tool_name": call.function.name,
