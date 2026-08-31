@@ -1,5 +1,4 @@
 import os
-import time
 import json
 import httpx
 from dotenv import load_dotenv
@@ -7,7 +6,6 @@ from google import genai
 from google.genai import types
 from google.genai.errors import ServerError, ClientError
 from groq import Groq
-from groq import APIError as GroqAPIError
 
 SYSTEM_PROMPT = """You are a styling assistant for a fashion catalog. You have
 access to exactly four tools: search_garments, check_availability,
@@ -26,9 +24,7 @@ Critically:
 load_dotenv()
 _groq_client = Groq(api_key=os.environ["GROQ_API_KEY"])
 
-GEMINI_TIMEOUT_MS = 25000  # a hang here would otherwise never trigger the Groq fallback below;
-# 15s was tuned against local network latency and was cutting off real Render->Gemini
-# responses before they could finish, forcing an unnecessary fallback to the less reliable Groq path
+GEMINI_TIMEOUT_MS = 25000  # a hang here would otherwise block the Gemini fallback path indefinitely
 _client = genai.Client(
     api_key=os.environ["GEMINI_API_KEY"],
     http_options=types.HttpOptions(timeout=GEMINI_TIMEOUT_MS),
@@ -54,58 +50,7 @@ class QuotaExhausted(Exception):
     """Raised when the Gemini free-tier daily quota is used up."""
     pass
 
-def _call_groq_fallback(gemini_messages, groq_tools):
-    """Convert Gemini-style message history into plain text and ask Groq instead."""
-    groq_messages = []
-    for m in gemini_messages:
-        role = "user" if m["role"] == "user" else "assistant"
-        groq_messages.append({"role": role, "content": m["parts"][0]["text"]})
-
-    response = _groq_client.chat.completions.create(
-        model="openai/gpt-oss-120b",
-        messages=groq_messages,
-        tools=groq_tools,
-    )
-    return response
-
-def _call_llm_with_fallback(gemini_messages, gemini_tools, groq_tools, max_retries=1):
-    for attempt in range(max_retries):
-        try:
-            response = _client.models.generate_content(
-                model="gemini-3.6-flash",
-                contents=gemini_messages,
-                config=types.GenerateContentConfig(
-                    tools=gemini_tools,
-                    http_options=types.HttpOptions(timeout=GEMINI_TIMEOUT_MS),
-                ),
-            )
-            part = response.candidates[0].content.parts[0]
-            if part.function_call:
-                return {"provider": "gemini", "tool_name": part.function_call.name,
-                        "tool_args": dict(part.function_call.args)}
-            # no tool call — re-stream just the text for a responsive feel
-            text = stream_gemini_text(gemini_messages)
-            if not text.strip():
-                text = "I'm not sure how to respond to that — could you rephrase?"
-            return {"provider": "gemini", "text": text}
-
-        except ClientError as e:
-            if "RESOURCE_EXHAUSTED" in str(e):
-                print("[Gemini quota exhausted — falling back to Groq]")
-                break
-            raise
-        except (ServerError, httpx.TimeoutException):
-            # A hang should fall back exactly like an explicit 5xx does - the
-            # SDK doesn't always convert a timeout into a ServerError itself.
-            if attempt == max_retries - 1:
-                print("[Gemini unavailable — falling back to Groq]")
-                break
-            time.sleep(2 ** attempt)
-
-    groq_messages = [
-        {"role": "user" if m["role"] == "user" else "assistant", "content": m["parts"][0]["text"]}
-        for m in gemini_messages
-    ]
+def _call_groq(groq_messages, groq_tools):
     groq_response = _groq_client.chat.completions.create(
         model="openai/gpt-oss-120b",
         messages=groq_messages,
@@ -116,13 +61,53 @@ def _call_llm_with_fallback(gemini_messages, gemini_tools, groq_tools, max_retri
         call = msg.tool_calls[0]
         return {"provider": "groq", "tool_name": call.function.name,
                 "tool_args": json.loads(call.function.arguments)}
-    try:
-        text = stream_groq_text(groq_messages, groq_tools)
-    except GroqAPIError:
-        text = "I had trouble generating a response there — could you try rephrasing, or ask again?"
+    text = stream_groq_text(groq_messages, groq_tools)
     if not text.strip():
-        text = "I'm not sure how to respond to that — could you rephrase?"
+        text = "I'm not sure how to respond to that - could you rephrase?"
     return {"provider": "groq", "text": text}
+
+def _call_gemini(gemini_messages, gemini_tools):
+    response = _client.models.generate_content(
+        model="gemini-3.6-flash",
+        contents=gemini_messages,
+        config=types.GenerateContentConfig(
+            tools=gemini_tools,
+            http_options=types.HttpOptions(timeout=GEMINI_TIMEOUT_MS),
+        ),
+    )
+    part = response.candidates[0].content.parts[0]
+    if part.function_call:
+        return {"provider": "gemini", "tool_name": part.function_call.name,
+                "tool_args": dict(part.function_call.args)}
+    text = stream_gemini_text(gemini_messages)
+    if not text.strip():
+        text = "I'm not sure how to respond to that - could you rephrase?"
+    return {"provider": "gemini", "text": text}
+
+def _call_llm_with_fallback(gemini_messages, gemini_tools, groq_tools):
+    """Groq is primary: it's the provider that's actually available at real usage
+    volumes, since every current free-tier Gemini model caps out at 20 requests/day.
+    Gemini is the fallback for the rare case Groq itself fails."""
+    groq_messages = [
+        {"role": "user" if m["role"] == "user" else "assistant", "content": m["parts"][0]["text"]}
+        for m in gemini_messages
+    ]
+    try:
+        return _call_groq(groq_messages, groq_tools)
+    except Exception as e:
+        print(f"[Groq unavailable ({type(e).__name__}: {e}) - falling back to Gemini]")
+
+    try:
+        return _call_gemini(gemini_messages, gemini_tools)
+    except ClientError as e:
+        if "RESOURCE_EXHAUSTED" in str(e):
+            print("[Gemini also unavailable: quota exhausted]")
+        else:
+            print(f"[Gemini also unavailable ({type(e).__name__}: {e})]")
+    except (ServerError, httpx.TimeoutException) as e:
+        print(f"[Gemini also unavailable ({type(e).__name__}: {e})]")
+
+    return {"provider": "none", "text": "I'm having trouble reaching my services right now - please try again in a moment."}
 
 def stream_gemini_text(gemini_messages):
     """Stream a plain-text response from Gemini."""

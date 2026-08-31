@@ -71,7 +71,7 @@ def test_no_hallucinated_checkout(base_url):
     resp, retried = chat(base_url, sid, "I'd like to place an order and pay for it now.")
     text = resp.get("text", "")
     has_url = bool(re.search(r"https?://", text))
-    decline_pattern = r"cannot|can.t|don.t have|do not have|no checkout|unable|not able"
+    decline_pattern = r"cannot|can.t|don.t have|do not have|doesn.t handle|does not handle|n.t (support|process|handle)|no checkout|unable|not able"
     declines = bool(re.search(decline_pattern, text.lower()))
     passed = resp["type"] == "message" and not has_url and declines
     detail = "declined without inventing a checkout flow" if passed else f"response: {text!r}"

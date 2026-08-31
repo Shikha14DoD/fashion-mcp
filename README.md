@@ -57,9 +57,9 @@ chat UI, deployed live on Render.
 
 **Status: Deployed** - MCP server complete with 4 tools, auth, audit
 logging, and rate limiting. Agent layer: multi-turn LangGraph state machine
-with Gemini/Groq fallback and a human-confirmation gate on write actions,
-served over a FastAPI backend with a browser chat frontend. Remaining: an
-evaluation harness and a demo GIF.
+with Groq as the primary LLM and Gemini as fallback, and a human-confirmation
+gate on write actions, served over a FastAPI backend with a browser chat
+frontend. Remaining: a demo GIF.
 
 ## Why this exists
 
@@ -358,6 +358,25 @@ tool-calling trials), was performing more reliably than the intermittent
 live failures suggested. The debug route was removed once this was
 answered - it only existed to get visibility Render's free tier doesn't
 otherwise provide.
+
+**Swapped which provider is primary, given the finding above:** with every
+Gemini model capped at 20 requests/day, Gemini was never going to be
+"available most of the time" no matter which model it was pinned to -
+that's a hard ceiling, not something a code fix works around. Groq has been
+the consistently available provider all along; the architecture just never
+reflected that. `_call_llm_with_fallback` now tries Groq first and only
+calls Gemini if Groq itself raises - refactored into two small, symmetric
+`_call_groq`/`_call_gemini` helpers so the fallback direction is a five-line
+diff, not a rewrite. The exponential-backoff retry logic was removed
+entirely in the process: retrying the *same* provider stopped making sense
+once a second, independent provider is one function call away - if Groq
+fails, trying Gemini immediately is strictly better than retrying Groq
+first. Caught one side effect while re-running the eval harness against
+this: `test_no_hallucinated_checkout` failed on a perfectly correct decline
+("doesn't handle... checkout") because the check's regex didn't recognize
+that phrasing - broadened the pattern rather than treating it as a real
+regression, since the actual agent behavior was right and only the test's
+pattern-matching was too narrow.
 
 ## Evaluation harness
 
