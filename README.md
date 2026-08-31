@@ -399,6 +399,33 @@ cleanly. This won't reach 100% - it's still a probabilistic model, just now
 sampled twice instead of once - but it directly reduces the exact failure
 mode observed, at effectively no cost.
 
+**The real root cause of most "technical issue" fabrications: a blank
+string looks exactly like a system failure to the model (caught by
+reproducing a user's real multi-turn conversation line by line until the
+failure appeared):** `search_garments` returning zero matches is a
+perfectly legitimate outcome - a gold maxi dress under $100 genuinely
+doesn't exist in this catalog. But `tools_node` built the follow-up prompt
+as `"Tool 'search_garments' result:\n{result_text}..."`, and for an empty
+list, `result_text` was a bare empty string - confirmed directly by calling
+the MCP tool and inspecting the raw result. The model was being handed a
+prompt that read, verbatim, `"Tool 'search_garments' result:\n\n\nRespond
+to the user naturally based on this."`, with nothing after "result:" at
+all. Every "technical issue" and "unable to access the catalog" fabrication
+chased throughout this session was plausibly this exact case, misdiagnosed
+as provider flakiness for hours: the model wasn't malfunctioning, it was
+being handed a genuinely ambiguous, content-free message and doing the
+same thing it did with the hallucinated checkout flow - inventing a
+plausible-sounding explanation instead of admitting uncertainty about
+what a blank string meant. Fixed with one `if not result_text.strip()`
+check that substitutes an explicit "empty result - zero items matched"
+message. Retested the user's exact real conversation that had triggered
+it, verbatim, and got an honest "I couldn't find any golden maxi dresses
+under $100" instead. The broader lesson, sitting under nearly every finding
+in this file: an LLM asked to interpret an ambiguous or missing input will
+confidently fill the gap with something false-sounding rather than flag
+the ambiguity, so the fix is almost never "make the model try harder" -
+it's removing the ambiguity from what it's given in the first place.
+
 ## Evaluation harness
 
 `eval_harness.py` drives the agent through its real HTTP API

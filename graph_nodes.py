@@ -200,6 +200,11 @@ def make_tools_node(session):
 
         result = await session.call_tool(tool_name, tool_args)
         result_text = "\n".join(c.text for c in result.content)
+        if not result_text.strip():
+            # An empty list is a legitimate "zero matches" result, not a failure -
+            # but a blank string here reads exactly like one to the model, which
+            # was fabricating a "technical issue" excuse instead of just saying so.
+            result_text = "[] (empty result - the query ran successfully but matched zero items)"
 
         return {
             "messages": [{
