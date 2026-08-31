@@ -1,4 +1,5 @@
 const API_BASE = window.FASHION_MCP_API_BASE;
+const REQUEST_TIMEOUT_MS = 100000; // longer than the backend's own worst-case retry/fallback time
 
 const chatWindow = document.getElementById("chat-window");
 const chatForm = document.getElementById("chat-form");
@@ -27,7 +28,27 @@ function appendMessage(role, text) {
 
 function appendTyping() {
   const row = appendMessage("assistant typing", "Thinking…");
+  const bubble = row.querySelector(".bubble");
+  const timer = setTimeout(() => {
+    bubble.textContent = "Still working - this can take up to a minute under heavy load...";
+  }, 12000);
+  row.dataset.timerId = timer;
   return row;
+}
+
+function removeTyping(row) {
+  clearTimeout(Number(row.dataset.timerId));
+  row.remove();
+}
+
+async function fetchWithTimeout(url, options, timeoutMs) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetch(url, { ...options, signal: controller.signal });
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 function appendConfirmCard(tool, args) {
@@ -138,20 +159,25 @@ function handleResponse(data) {
 async function resolveConfirmation(answer) {
   const typingRow = appendTyping();
   try {
-    const res = await fetch(`${API_BASE}/confirm`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ session_id: sessionId, answer }),
-    });
-    typingRow.remove();
+    const res = await fetchWithTimeout(
+      `${API_BASE}/confirm`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ session_id: sessionId, answer }),
+      },
+      REQUEST_TIMEOUT_MS
+    );
+    removeTyping(typingRow);
     if (!res.ok) throw new Error(`Server returned ${res.status}`);
     const data = await res.json();
     awaitingConfirmation = false;
     setInputEnabled(true);
     handleResponse(data);
   } catch (err) {
-    typingRow.remove();
-    appendMessage("error", `Something went wrong: ${err.message}`);
+    removeTyping(typingRow);
+    const message = err.name === "AbortError" ? "The request took too long and was cancelled - please try again." : `Something went wrong: ${err.message}`;
+    appendMessage("error", message);
     awaitingConfirmation = false;
     setInputEnabled(true);
   }
@@ -166,18 +192,23 @@ async function sendMessage(text) {
     if (!sessionId) {
       await ensureSession();
     }
-    const res = await fetch(`${API_BASE}/chat`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ session_id: sessionId, message: text }),
-    });
-    typingRow.remove();
+    const res = await fetchWithTimeout(
+      `${API_BASE}/chat`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ session_id: sessionId, message: text }),
+      },
+      REQUEST_TIMEOUT_MS
+    );
+    removeTyping(typingRow);
     if (!res.ok) throw new Error(`Server returned ${res.status}`);
     const data = await res.json();
     handleResponse(data);
   } catch (err) {
-    typingRow.remove();
-    appendMessage("error", `Something went wrong: ${err.message}`);
+    removeTyping(typingRow);
+    const message = err.name === "AbortError" ? "The request took too long and was cancelled - please try again." : `Something went wrong: ${err.message}`;
+    appendMessage("error", message);
   } finally {
     if (!awaitingConfirmation) setInputEnabled(true);
     chatInput.focus();

@@ -299,6 +299,23 @@ forcing an unnecessary fallback to the less reliable Groq path. Raised to
 route to the same API) - "it responds in 2s for me" isn't the same claim as
 "it responds in 2s from anywhere."
 
+**Raising the backend's timeout quietly moved the same risk to the frontend
+(caught via a user report of the chat input staying disabled for several
+minutes):** `frontend/app.js` had no timeout of its own on the `/chat`
+fetch, on the assumption the backend would always come back reasonably
+quickly. Raising `GEMINI_TIMEOUT_MS` above also raised the backend's
+worst case: three Gemini retries at the new, longer timeout plus backoff
+before ever reaching Groq, well over a minute in the worst case. With no
+client-side timeout, the input stayed disabled that entire time with only a
+static "Thinking..." label, indistinguishable from actually being stuck.
+Fixed by adding an `AbortController`-based timeout to every backend fetch
+(bounded above the backend's own worst case, so it only fires on a genuine
+network-level hang), a distinct "request timed out" message instead of a
+generic error, and updating the typing indicator's text after 12 seconds so
+a long-but-healthy wait doesn't read the same as a frozen page. The lesson
+repeats from the note above: fixing a timeout on one side of a request can
+just relocate the same unbounded-wait problem to the other side.
+
 ## Evaluation harness
 
 `eval_harness.py` drives the agent through its real HTTP API
