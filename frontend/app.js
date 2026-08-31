@@ -105,6 +105,28 @@ function setInputEnabled(enabled) {
   sendBtn.disabled = !enabled;
 }
 
+const SEND_COOLDOWN_MS = 3000; // guards against rapid messages exhausting the
+// shared Groq per-minute token budget - a burst of quick messages is what
+// actually triggered the rate-limit cascade during testing, not normal use
+
+function startSendCooldown() {
+  const originalLabel = sendBtn.textContent;
+  let remaining = Math.ceil(SEND_COOLDOWN_MS / 1000);
+  setInputEnabled(false);
+  sendBtn.textContent = `Wait ${remaining}s`;
+  const interval = setInterval(() => {
+    remaining -= 1;
+    if (remaining > 0) {
+      sendBtn.textContent = `Wait ${remaining}s`;
+    } else {
+      clearInterval(interval);
+      sendBtn.textContent = originalLabel;
+      setInputEnabled(true);
+      chatInput.focus();
+    }
+  }, 1000);
+}
+
 async function ensureSession() {
   const stored = sessionStorage.getItem("fashion_mcp_session_id");
   if (stored) {
@@ -172,16 +194,15 @@ async function resolveConfirmation(answer) {
     if (!res.ok) throw new Error(`Server returned ${res.status}`);
     const data = await res.json();
     awaitingConfirmation = false;
-    setInputEnabled(true);
     handleResponse(data);
+    if (!awaitingConfirmation) startSendCooldown();
   } catch (err) {
     removeTyping(typingRow);
     const message = err.name === "AbortError" ? "The request took too long and was cancelled - please try again." : `Something went wrong: ${err.message}`;
     appendMessage("error", message);
     awaitingConfirmation = false;
-    setInputEnabled(true);
+    startSendCooldown();
   }
-  chatInput.focus();
 }
 
 async function sendMessage(text) {
@@ -210,8 +231,7 @@ async function sendMessage(text) {
     const message = err.name === "AbortError" ? "The request took too long and was cancelled - please try again." : `Something went wrong: ${err.message}`;
     appendMessage("error", message);
   } finally {
-    if (!awaitingConfirmation) setInputEnabled(true);
-    chatInput.focus();
+    if (!awaitingConfirmation) startSendCooldown();
   }
 }
 

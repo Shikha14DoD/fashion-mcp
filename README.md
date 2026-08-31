@@ -448,6 +448,22 @@ confidently fill the gap with something false-sounding rather than flag
 the ambiguity, so the fix is almost never "make the model try harder" -
 it's removing the ambiguity from what it's given in the first place.
 
+**Free-tier reliability has a hard floor code can't fix - added a
+client-side send cooldown as the honest response to that:** every
+provider-side fix in this file (timeouts, retries, primary/fallback order)
+improved *how gracefully* the app handles running out of headroom, but none
+of them raise the headroom itself - Gemini's 20/day cap and Groq's 8000 TPM
+budget are real ceilings, and a burst of messages sent in quick succession
+(automated testing or an impatient user re-sending) is exactly what
+exhausts them fast enough to cascade into both providers failing at once.
+The actual fix for that is either paying for usage on one provider (removes
+the ceiling entirely) or not hitting the ceiling in the first place. Added
+a 3-second cooldown on the send button after every response, applied
+uniformly whether the turn succeeded or errored, since either path may have
+already spent tokens. It's a small, honest mitigation, not a cure: normal
+conversational pacing was never the problem, rapid-fire bursts were, and
+this removes the ability to accidentally trigger one from the UI itself.
+
 ## Evaluation harness
 
 `eval_harness.py` drives the agent through its real HTTP API
