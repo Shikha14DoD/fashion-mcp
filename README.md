@@ -464,6 +464,33 @@ already spent tokens. It's a small, honest mitigation, not a cure: normal
 conversational pacing was never the problem, rapid-fire bursts were, and
 this removes the ability to accidentally trigger one from the UI itself.
 
+**The MCP subprocess couldn't see `DATABASE_URL` at all on Render - a real
+bug hiding underneath a session's worth of provider debugging (diagnosed
+from a user's hypothesis, confirmed with a temporary tool-level diagnostic
+endpoint):** `web_server.py` spawns `server.py` via `StdioServerParameters`
+with no explicit `env`. The MCP SDK's `stdio_client` does not inherit the
+parent process's environment by default - it passes only a small safe-list
+(`PATH`, `HOME`, etc. on Linux) merged with whatever `env` is explicitly
+given, which was nothing here. Locally this was invisible because
+`server.py`'s own `load_dotenv()` call finds the local `.env` file
+regardless of what the parent passed down; on Render, `.env` is gitignored
+and never deployed, so the subprocess had no way to see `DATABASE_URL` at
+all. Confirmed directly: a temporary `/debug/mcp` route that called
+`search_garments` through the live subprocess, bypassing the LLM entirely,
+returned `"Error executing tool search_garments: 'DATABASE_URL'"` -
+a plain `KeyError`, not a provider issue. Fixed by passing
+`env={"DATABASE_URL": os.environ["DATABASE_URL"]}` explicitly to
+`StdioServerParameters`. This also reframes a chunk of this session's
+provider-flakiness investigation: some of the "technical issue" replies
+blamed on Groq/Gemini were likely the model *honestly* reporting a real,
+underlying tool error it wasn't given clean language to explain, rather
+than fabricating one - the empty-result fix earlier addressed the
+ambiguous-input version of that same pattern; this was the same symptom
+with an actual error behind it. Exactly why the failure wasn't 100%
+consistent across the whole session remains unclear - worth treating as
+resolved based on the direct confirmation and retest, not as fully
+explained.
+
 ## Evaluation harness
 
 `eval_harness.py` drives the agent through its real HTTP API

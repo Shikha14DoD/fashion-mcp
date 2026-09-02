@@ -1,4 +1,5 @@
 import asyncio
+import os
 import uuid
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -21,7 +22,14 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-server_params = StdioServerParameters(command="python", args=["server.py"])
+# stdio_client only inherits a small safe-list of env vars (PATH, HOME, etc.) into
+# the subprocess by default, not the parent's full environment - DATABASE_URL has
+# to be passed explicitly or server.py can't connect to Postgres at all.
+server_params = StdioServerParameters(
+    command="python",
+    args=["server.py"],
+    env={"DATABASE_URL": os.environ["DATABASE_URL"]},
+)
 
 def mcp_tool_to_gemini_schema(tool):
     return types.Tool(function_declarations=[types.FunctionDeclaration(
@@ -87,18 +95,6 @@ async def startup():
 @app.post("/session")
 def new_session():
     return {"session_id": str(uuid.uuid4())}
-
-@app.get("/debug/mcp")
-async def debug_mcp():
-    """Temporary: calls a real tool through the already-running MCP subprocess,
-    bypassing the LLM entirely, to check whether the subprocess can actually
-    reach the database - isolates an env-inheritance issue from a provider issue."""
-    try:
-        result = await _session.call_tool("search_garments", {"article_type": "Tshirts", "limit": 2})
-        result_text = "\n".join(c.text for c in result.content)
-        return {"success": True, "is_error": getattr(result, "isError", None), "result_text": result_text[:1000]}
-    except Exception as e:
-        return {"success": False, "error_type": type(e).__name__, "error": str(e)[:1000]}
 
 @app.post("/chat")
 async def chat(req: ChatRequest):
