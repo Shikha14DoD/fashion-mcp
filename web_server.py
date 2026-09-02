@@ -88,6 +88,18 @@ async def startup():
 def new_session():
     return {"session_id": str(uuid.uuid4())}
 
+@app.get("/debug/mcp")
+async def debug_mcp():
+    """Temporary: calls a real tool through the already-running MCP subprocess,
+    bypassing the LLM entirely, to check whether the subprocess can actually
+    reach the database - isolates an env-inheritance issue from a provider issue."""
+    try:
+        result = await _session.call_tool("search_garments", {"article_type": "Tshirts", "limit": 2})
+        result_text = "\n".join(c.text for c in result.content)
+        return {"success": True, "is_error": getattr(result, "isError", None), "result_text": result_text[:1000]}
+    except Exception as e:
+        return {"success": False, "error_type": type(e).__name__, "error": str(e)[:1000]}
+
 @app.post("/chat")
 async def chat(req: ChatRequest):
     config = {"configurable": {"thread_id": req.session_id}}
