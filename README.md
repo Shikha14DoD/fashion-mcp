@@ -1,3 +1,4 @@
+Live demo: fashion-mcp-frontend.onrender.com Backend API: fashion-mcp-backend.onrender.com
 
 Imagine a personal stylist you can text: *"I need something for an outdoor
 September wedding, under $200, and I already own gold jewellery."* Instead of
