@@ -14,12 +14,29 @@ function scrollToBottom() {
   chatWindow.scrollTop = chatWindow.scrollHeight;
 }
 
-function appendMessage(role, text) {
+function renderMarkdown(container, text) {
+  const html = DOMPurify.sanitize(marked.parse(text, { breaks: true }));
+  container.innerHTML = html;
+  // marked renders bare <table> elements - wrap them so wide tables scroll
+  // inside the bubble instead of overflowing the page.
+  container.querySelectorAll("table").forEach((table) => {
+    const wrapper = document.createElement("div");
+    wrapper.className = "table-scroll";
+    table.parentNode.insertBefore(wrapper, table);
+    wrapper.appendChild(table);
+  });
+}
+
+function appendMessage(role, text, { markdown = false } = {}) {
   const row = document.createElement("div");
   row.className = `message ${role}`;
   const bubble = document.createElement("div");
   bubble.className = "bubble";
-  bubble.textContent = text;
+  if (markdown) {
+    renderMarkdown(bubble, text);
+  } else {
+    bubble.textContent = text;
+  }
   row.appendChild(bubble);
   chatWindow.appendChild(row);
   scrollToBottom();
@@ -27,8 +44,9 @@ function appendMessage(role, text) {
 }
 
 function appendTyping() {
-  const row = appendMessage("assistant typing", "Thinking…");
+  const row = appendMessage("assistant typing", "");
   const bubble = row.querySelector(".bubble");
+  bubble.innerHTML = '<span class="typing-dots"><span></span><span></span><span></span></span>';
   const timer = setTimeout(() => {
     bubble.textContent = "Still working - this can take up to a minute under heavy load...";
   }, 12000);
@@ -174,7 +192,7 @@ function handleResponse(data) {
     appendConfirmCard(data.tool, data.args);
     setInputEnabled(false);
   } else {
-    appendMessage("assistant", data.text);
+    appendMessage("assistant", data.text, { markdown: true });
   }
 }
 
