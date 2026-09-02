@@ -96,6 +96,16 @@ async def startup():
 def new_session():
     return {"session_id": str(uuid.uuid4())}
 
+@app.get("/debug/mcp")
+async def debug_mcp():
+    """Temporary re-check: confirm the DATABASE_URL fix actually took effect."""
+    try:
+        result = await _session.call_tool("search_garments", {"article_type": "Tshirts", "limit": 2})
+        result_text = "\n".join(c.text for c in result.content)
+        return {"success": True, "result_text": result_text[:500]}
+    except Exception as e:
+        return {"success": False, "error_type": type(e).__name__, "error": str(e)[:500]}
+
 @app.post("/chat")
 async def chat(req: ChatRequest):
     config = {"configurable": {"thread_id": req.session_id}}
