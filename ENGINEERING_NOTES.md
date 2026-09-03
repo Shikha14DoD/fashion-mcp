@@ -5,6 +5,30 @@ and deploying this project - what broke, how it was diagnosed, and what
 actually fixed it. Moved out of the main [README](README.md) to keep that
 one scannable; this is the detailed version for anyone who wants it.
 
+## Evaluation harness details
+
+`eval_harness.py` drives the agent through its real HTTP API (`/session`,
+`/chat`, `/confirm`) - the same interface a browser client uses - and
+checks each response against ground truth pulled directly from the same
+database via the MCP tool functions. It isn't just checking that the agent
+replies; it's checking the reply is *true*: a search response must contain
+a real price from the catalog, an availability answer must match the real
+stock quantity, care instructions must overlap with the real `CARE_MAP`
+entry, and the wishlist confirmation gate must fire with the correct args
+and no leaked `api_key` - several of these are the exact failure modes
+documented below (hallucinated checkout, fabricated tool output, the
+api_key leak), turned into repeatable checks instead of things a human has
+to happen to notice.
+
+## Known limitations
+
+- **Rate limiting is in-memory** (5 calls/60s per user) - resets on server
+  restart and wouldn't hold up across multiple server instances. A
+  production version would use Redis for shared state.
+- See also the `article_type` normalization limitation noted inline below.
+
+## Bug log
+
 **Tool registration ordering bug (Stage 3):** `mcp.run()` was accidentally
 left in the middle of `server.py`, after only the first tool was defined.
 Since Python executes top to bottom, this silently started the server with
