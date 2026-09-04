@@ -433,6 +433,28 @@ consistent across the whole session remains unclear - worth treating as
 resolved based on the direct confirmation and retest, not as fully
 explained.
 
+**Wrong order of operations on the write path: saving before checking stock,
+not after (caught via a live user report):** `save_to_wishlist` has no size
+parameter at all - the wishlist table only ever tracks `garment_id`. With
+nothing in the tool's schema or the system prompt saying otherwise, the
+model would call `save_to_wishlist` as soon as it decided to save an item,
+then ask which size the user wanted afterward, as small talk with no real
+effect - the size question and the save were disconnected. Confirmed with
+a scripted conversation running against the real graph (Groq live, not
+mocked): asking to "add the first one to my wishlist" went straight to the
+confirmation gate with no size or stock check in between. Fixed at two
+levels: the system prompt now states the required order explicitly (ask
+size, call `check_availability`, only then `save_to_wishlist`), and
+`save_to_wishlist`'s own docstring - which becomes part of the tool
+definition both Gemini and Groq actually see when deciding to call it -
+now repeats the same constraint at the exact decision point. Re-tested
+with the same script: the in-stock case now asks for size, checks it, and
+only then reaches the confirmation gate; the out-of-stock case declines
+and offers a different size, and `save_to_wishlist` is never called at
+all. Like the hallucinated-checkout fix earlier, this is a prompt-level
+correction, not a hard schema constraint - the model choosing to skip a
+step is still possible, just no longer the default, unguided behavior.
+
 **Eval harness false failures (found while first building it):** the first
 run showed 2 false failures, not real bugs - one check required a straight
 apostrophe and missed the model's curly `'`, the other required an exact
