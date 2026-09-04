@@ -7,6 +7,8 @@ Both are on Render's free tier and spin down after ~15 minutes idle, so the
 first request after a lull can take 20-30s to wake up - that's a cold
 start, not a bug.
 
+![Demo: searching the catalog, then saving an item to the wishlist through the confirmation gate](docs/demo.gif)
+
 Imagine a personal stylist you can text: *"I need something for an outdoor
 September wedding, under $200, and I already own gold jewellery."* Instead of
 scrolling through filters, you just describe what you need, and the assistant
@@ -27,7 +29,7 @@ first - and every attempt, successful or not, ends up in an audit log.
 logging, and rate limiting. Agent layer: multi-turn LangGraph state machine
 with Groq as the primary LLM and Gemini as fallback, and a human-confirmation
 gate on write actions, served over a FastAPI backend with a browser chat
-frontend. Remaining: a demo GIF.
+frontend.
 
 ## Why this exists
 
@@ -103,7 +105,7 @@ mcp dev server.py       # launch MCP Inspector to test tools
 - [x] Simple chat UI
 - [x] Public deployment (Render)
 - [x] Evaluation harness (task success rate, groundedness)
-- [ ] Demo GIF
+- [x] Demo GIF
 
 Known limitations, including in-memory rate limiting, are noted in
 [ENGINEERING_NOTES.md](ENGINEERING_NOTES.md).
