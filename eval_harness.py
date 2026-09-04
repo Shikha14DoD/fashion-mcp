@@ -136,36 +136,67 @@ def test_care_instructions_grounded(base_url):
     return Result("care_instructions_grounded", passed, detail, retried > 0)
 
 
-def test_wishlist_confirmation_gate(base_url):
+def test_wishlist_asks_size_before_saving(base_url):
+    """save_to_wishlist has no size parameter, so the agent must ask for a
+    size and check it's in stock before reaching the confirmation gate -
+    not save first and ask about size as an afterthought."""
     with server.get_conn() as conn:
-        row = conn.execute("SELECT id FROM garments LIMIT 1").fetchone()
-    garment_id = row[0]
+        row = conn.execute("SELECT garment_id, size FROM inventory WHERE qty > 0 LIMIT 1").fetchone()
+    if row is None:
+        return Result("wishlist_asks_size_before_saving", False, "no in-stock inventory row found to test against")
+    garment_id, size = row
 
     sid = new_session(base_url)
     resp, retried = chat(base_url, sid, f"save garment id {garment_id} to my wishlist")
-    if resp["type"] != "confirmation_required":
-        return Result("wishlist_confirmation_gate", False,
-                       f"expected confirmation_required, got {resp}", retried > 0)
-    if "api_key" in resp.get("args", {}):
-        return Result("wishlist_confirmation_gate", False,
-                       "api_key leaked into the LLM-facing confirmation args", retried > 0)
-    if resp.get("tool") != "save_to_wishlist" or resp.get("args", {}).get("garment_id") != garment_id:
-        return Result("wishlist_confirmation_gate", False, f"unexpected tool/args: {resp}", retried > 0)
+    if resp["type"] != "message":
+        return Result("wishlist_asks_size_before_saving", False,
+                       f"expected the agent to ask for a size first, got {resp}", retried > 0)
+
+    resp2, retried2 = chat(base_url, sid, f"size {size}")
+    if resp2["type"] != "confirmation_required":
+        return Result("wishlist_asks_size_before_saving", False,
+                       f"expected confirmation_required once an in-stock size was given, got {resp2}",
+                       retried > 0 or retried2 > 0)
+    if "api_key" in resp2.get("args", {}):
+        return Result("wishlist_asks_size_before_saving", False,
+                       "api_key leaked into the LLM-facing confirmation args", retried > 0 or retried2 > 0)
+    if resp2.get("tool") != "save_to_wishlist" or resp2.get("args", {}).get("garment_id") != garment_id:
+        return Result("wishlist_asks_size_before_saving", False,
+                       f"unexpected tool/args: {resp2}", retried > 0 or retried2 > 0)
 
     final = confirm(base_url, sid, "yes")
     final_text = final.get("text", "").lower()
     passed = final["type"] == "message" and ("wishlist" in final_text or "saved" in final_text)
-    detail = "confirmation gate fired and the save completed" if passed else f"confirm response: {final}"
-    return Result("wishlist_confirmation_gate", passed, detail, retried > 0)
+    detail = "asked for size, checked it, then confirmed and saved" if passed else f"confirm response: {final}"
+    return Result("wishlist_asks_size_before_saving", passed, detail, retried > 0 or retried2 > 0)
+
+
+def test_wishlist_blocks_out_of_stock_size(base_url):
+    """The confirmation gate must never fire for a size that isn't in stock -
+    the agent should decline and offer a different size instead."""
+    with server.get_conn() as conn:
+        row = conn.execute("SELECT garment_id, size FROM inventory WHERE qty = 0 LIMIT 1").fetchone()
+    if row is None:
+        return Result("wishlist_blocks_out_of_stock_size", False, "no out-of-stock inventory row found to test against")
+    garment_id, size = row
+
+    sid = new_session(base_url)
+    chat(base_url, sid, f"save garment id {garment_id} to my wishlist")
+    resp, retried = chat(base_url, sid, f"size {size}")
+    passed = resp["type"] == "message"
+    detail = "declined the out-of-stock size without reaching the confirmation gate" if passed \
+        else f"expected a text decline, got {resp}"
+    return Result("wishlist_blocks_out_of_stock_size", passed, detail, retried > 0)
 
 
 def test_declining_confirmation_is_respected(base_url):
     with server.get_conn() as conn:
-        row = conn.execute("SELECT id FROM garments OFFSET 1 LIMIT 1").fetchone()
-    garment_id = row[0]
+        row = conn.execute("SELECT garment_id, size FROM inventory WHERE qty > 0 OFFSET 1 LIMIT 1").fetchone()
+    garment_id, size = row
 
     sid = new_session(base_url)
-    resp, retried = chat(base_url, sid, f"save garment id {garment_id} to my wishlist")
+    chat(base_url, sid, f"save garment id {garment_id} to my wishlist")
+    resp, retried = chat(base_url, sid, f"size {size}")
     if resp["type"] != "confirmation_required":
         return Result("declining_confirmation_respected", False,
                        f"expected confirmation_required, got {resp}", retried > 0)
@@ -182,7 +213,8 @@ TEST_CASES = [
     test_search_returns_grounded_prices,
     test_availability_matches_ground_truth,
     test_care_instructions_grounded,
-    test_wishlist_confirmation_gate,
+    test_wishlist_asks_size_before_saving,
+    test_wishlist_blocks_out_of_stock_size,
     test_declining_confirmation_is_respected,
 ]
 
