@@ -140,7 +140,11 @@ def get_care_instructions(garment_id: int) -> dict:
 
 @mcp.tool()
 def save_to_wishlist(api_key: str, garment_id: int) -> dict:
-    """Save a garment to the authenticated user's wishlist."""
+    """Save a garment to the authenticated user's wishlist. This tool has no
+    size parameter, so before calling it: ask the user which size they want
+    (if they haven't said), call check_availability for that garment and
+    size, and only call this if it's in stock. If it's out of stock, tell
+    the user and offer to check a different size instead of saving it."""
     start = time.time()
     user_id = authenticate(api_key)
 
