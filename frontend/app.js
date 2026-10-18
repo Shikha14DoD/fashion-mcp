@@ -118,9 +118,12 @@ function appendConfirmCard(tool, args) {
   });
 }
 
-function setInputEnabled(enabled) {
+const DEFAULT_PLACEHOLDER = chatInput.placeholder;
+
+function setInputEnabled(enabled, waitingText) {
   chatInput.disabled = !enabled;
   sendBtn.disabled = !enabled;
+  chatInput.placeholder = enabled ? DEFAULT_PLACEHOLDER : waitingText || "Waiting for a reply...";
 }
 
 const SEND_COOLDOWN_MS = 3000; // guards against rapid messages exhausting the
@@ -190,7 +193,7 @@ function handleResponse(data) {
   if (data.type === "confirmation_required") {
     awaitingConfirmation = true;
     appendConfirmCard(data.tool, data.args);
-    setInputEnabled(false);
+    setInputEnabled(false, "Respond to the confirmation above first...");
   } else {
     appendMessage("assistant", data.text, { markdown: true });
   }
@@ -266,7 +269,7 @@ newSessionBtn.addEventListener("click", () => {
 });
 
 (async function init() {
-  setInputEnabled(false);
+  setInputEnabled(false, "Connecting... (may take up to 30s on a cold start)");
   try {
     await ensureSessionWithRetry();
     chatInput.focus();
