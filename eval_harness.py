@@ -208,6 +208,85 @@ def test_declining_confirmation_is_respected(base_url):
     return Result("declining_confirmation_respected", passed, detail, retried > 0)
 
 
+def test_invalid_api_key_rejected(base_url):
+    """White-box: save_to_wishlist must reject a bad key before ever touching
+    the database, and never consume rate-limit budget for the real demo user
+    in doing so (auth happens before the rate-limit check)."""
+    with server.get_conn() as conn:
+        row = conn.execute("SELECT garment_id FROM inventory WHERE qty > 0 LIMIT 1").fetchone()
+    garment_id = row[0]
+    result = server.save_to_wishlist(api_key="clearly_invalid_key_xyz", garment_id=garment_id)
+    passed = result.get("error") == "Invalid API key"
+    detail = "invalid key rejected before touching the database" if passed else f"unexpected result: {result}"
+    return Result("invalid_api_key_rejected", passed, detail)
+
+
+def test_wishlist_rejects_nonexistent_garment(base_url):
+    """White-box: save_to_wishlist's not_found path for a garment id that
+    was never in the catalog, using a real (demo) api key so auth succeeds
+    and the existence check is what's actually being exercised."""
+    with server.get_conn() as conn:
+        row = conn.execute("SELECT api_key FROM users LIMIT 1").fetchone()
+    if row is None:
+        return Result("wishlist_rejects_nonexistent_garment", False, "no user row found to test against")
+    api_key = row[0]
+    bogus_id = 999_999_999
+    result = server.save_to_wishlist(api_key=api_key, garment_id=bogus_id)
+    passed = "does not exist" in result.get("error", "")
+    detail = "nonexistent garment id rejected" if passed else f"unexpected result: {result}"
+    return Result("wishlist_rejects_nonexistent_garment", passed, detail)
+
+
+def test_rate_limit_enforced(base_url):
+    """White-box, isolated: hammer check_rate_limit for a synthetic user id
+    that's never used anywhere else, so this can't affect the real demo
+    user's shared budget or any other test's rate-limit headroom."""
+    synthetic_user = f"eval_harness_rate_limit_test_{int(time.time())}"
+    allowed = [server.check_rate_limit(synthetic_user) for _ in range(server.RATE_LIMIT_MAX)]
+    sixth = server.check_rate_limit(synthetic_user)
+    passed = all(allowed) and not sixth
+    detail = f"first {server.RATE_LIMIT_MAX} calls allowed, next one blocked" if passed else \
+        f"allowed={allowed}, sixth_call_allowed={sixth}"
+    return Result("rate_limit_enforced", passed, detail)
+
+
+def test_empty_search_is_honest(base_url):
+    """Regression test for a real bug: a blank tool-result string for zero
+    matches read, verbatim, like a system failure to the model, which then
+    fabricated a 'technical issue' excuse instead of saying it found
+    nothing. Picks a filter combination with zero real matches, confirmed
+    against the database, and checks the agent doesn't reach for one of the
+    same retryable-sounding excuses used elsewhere in this harness."""
+    ground_truth = server.search_garments(article_type="zzznonexistenttype", limit=10)
+    if ground_truth:
+        return Result("empty_search_is_honest", False, "expected filter unexpectedly matched real rows")
+
+    sid = new_session(base_url)
+    resp, retried = chat(base_url, sid, "search for zzznonexistenttype")
+    text = resp.get("text", "").lower()
+    fabricated = any(p in text for p in RETRYABLE_PHRASES)
+    passed = resp["type"] == "message" and not fabricated
+    detail = "zero matches reported honestly, no fabricated excuse" if passed else f"response: {text!r}"
+    return Result("empty_search_is_honest", passed, detail, retried > 0)
+
+
+def test_care_instructions_missing_garment(base_url):
+    """The agent must say a garment doesn't exist rather than invent care
+    instructions for an id that was never in the catalog."""
+    bogus_id = 999_999_999
+    ground_truth = server.get_care_instructions(bogus_id)
+    if "error" not in ground_truth:
+        return Result("care_instructions_missing_garment", False, "expected bogus id unexpectedly matched a real garment")
+
+    sid = new_session(base_url)
+    resp, retried = chat(base_url, sid, f"what are the care instructions for garment id {bogus_id}?")
+    text = resp.get("text", "").lower()
+    acknowledges_missing = bool(re.search(r"doesn.t exist|does not exist|not found|no garment|couldn.t find|could not find", text))
+    passed = resp["type"] == "message" and acknowledges_missing
+    detail = "acknowledged the garment doesn't exist" if passed else f"response: {text!r}"
+    return Result("care_instructions_missing_garment", passed, detail, retried > 0)
+
+
 TEST_CASES = [
     test_no_hallucinated_checkout,
     test_search_returns_grounded_prices,
@@ -216,6 +295,11 @@ TEST_CASES = [
     test_wishlist_asks_size_before_saving,
     test_wishlist_blocks_out_of_stock_size,
     test_declining_confirmation_is_respected,
+    test_invalid_api_key_rejected,
+    test_wishlist_rejects_nonexistent_garment,
+    test_rate_limit_enforced,
+    test_empty_search_is_honest,
+    test_care_instructions_missing_garment,
 ]
 
 
