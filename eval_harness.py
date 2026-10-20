@@ -287,6 +287,125 @@ def test_care_instructions_missing_garment(base_url):
     return Result("care_instructions_missing_garment", passed, detail, retried > 0)
 
 
+def test_article_type_normalization(base_url):
+    """White-box regression test for a documented bug: Gemini's function
+    calling naturally produces values like 't-shirt' while the catalog
+    stores 'Tshirts' (no space or hyphen). Confirms messy real-world
+    variants still return the same ground-truth rows as the canonical
+    value, i.e. the fix in search_garments's SQL normalization holds."""
+    canonical = {row["id"] for row in server.search_garments(article_type="Tshirts", limit=50)}
+    if not canonical:
+        return Result("article_type_normalization", False, "no ground-truth Tshirts rows to compare against")
+
+    mismatches = {}
+    for variant in ("t-shirt", "T-Shirts", "TSHIRT", "t shirt"):
+        got = {row["id"] for row in server.search_garments(article_type=variant, limit=50)}
+        if got != canonical:
+            mismatches[variant] = got
+    passed = not mismatches
+    detail = "all messy variants matched the canonical result set" if passed else f"mismatches: {mismatches}"
+    return Result("article_type_normalization", passed, detail)
+
+
+def test_search_respects_colour_filter(base_url):
+    with server.get_conn() as conn:
+        row = conn.execute("""
+            SELECT article_type, colour, COUNT(*) c FROM garments
+            WHERE colour IS NOT NULL
+              AND article_type IN ('Tshirts','Shirts','Tops','Kurtas','Sunglasses','Handbags','Heels','Casual Shoes')
+            GROUP BY article_type, colour HAVING COUNT(*) BETWEEN 1 AND 5 ORDER BY c LIMIT 1
+        """).fetchone()
+    if row is None:
+        return Result("search_respects_colour_filter", False, "no narrow article_type/colour combo found to test against")
+    article_type, colour, _ = row
+    ground_truth = server.search_garments(article_type=article_type, colour=colour, max_price_usd=10000, limit=10)
+    if not ground_truth:
+        return Result("search_respects_colour_filter", False, "ground-truth query returned nothing")
+    real_prices = {f"${g['price_cents'] / 100:.2f}" for g in ground_truth}
+
+    sid = new_session(base_url)
+    resp, retried = chat(base_url, sid, f"show me {colour.lower()} {article_type.lower()}")
+    text = resp.get("text", "")
+    matched = [p for p in real_prices if p in text]
+    passed = resp["type"] == "message" and len(matched) > 0
+    detail = f"found real price(s) {matched} for {colour} {article_type}" if passed else \
+        f"no real prices matched; response: {text!r}"
+    return Result("search_respects_colour_filter", passed, detail, retried > 0)
+
+
+def test_search_respects_price_boundary(base_url):
+    """search_garments uses price_cents <= max_cents - confirm the boundary
+    is inclusive through the live agent, not just at the SQL layer."""
+    with server.get_conn() as conn:
+        row = conn.execute("SELECT id, name, article_type, price_cents FROM garments ORDER BY price_cents LIMIT 1").fetchone()
+    garment_id, name, article_type, price_cents = row
+    exact_price = price_cents / 100
+    ground_truth = server.search_garments(article_type=article_type, max_price_usd=exact_price, limit=50)
+    if garment_id not in {g["id"] for g in ground_truth}:
+        return Result("search_respects_price_boundary", False,
+                       "boundary item unexpectedly excluded from ground truth itself - can't test against it")
+
+    sid = new_session(base_url)
+    resp, retried = chat(base_url, sid, f"show me {article_type.lower()} for exactly ${exact_price:.2f} or less")
+    text = resp.get("text", "")
+    passed = resp["type"] == "message" and f"${exact_price:.2f}" in text
+    detail = f"boundary-priced item (${exact_price:.2f}) included" if passed else f"response: {text!r}"
+    return Result("search_respects_price_boundary", passed, detail, retried > 0)
+
+
+def test_availability_handles_unknown_size(base_url):
+    """check_availability's error path for a (garment, size) combo that was
+    never in the inventory table at all, distinct from the qty=0 case
+    already covered by wishlist_blocks_out_of_stock_size."""
+    with server.get_conn() as conn:
+        garment_id = conn.execute("SELECT id FROM garments LIMIT 1").fetchone()[0]
+        taken_sizes = {r[0] for r in conn.execute(
+            "SELECT size FROM inventory WHERE garment_id = %(id)s", {"id": garment_id}
+        ).fetchall()}
+    bogus_size = next(s for s in ("XXL2", "ZZ", "SIZE404") if s not in taken_sizes)
+    ground_truth = server.check_availability(garment_id, bogus_size)
+    if "error" not in ground_truth:
+        return Result("availability_handles_unknown_size", False, "expected bogus size unexpectedly had a real record")
+
+    sid = new_session(base_url)
+    resp, retried = chat(base_url, sid, f"is garment id {garment_id} in stock in size {bogus_size}?")
+    text = resp.get("text", "").lower()
+    fabricated = any(p in text for p in RETRYABLE_PHRASES)
+    acknowledges_missing = bool(re.search(r"no record|not available|don.t have|doesn.t have|couldn.t find|could not find|no such size|not a valid size", text))
+    passed = resp["type"] == "message" and not fabricated and acknowledges_missing
+    detail = "acknowledged no record for that size, without fabricating a quantity" if passed else f"response: {text!r}"
+    return Result("availability_handles_unknown_size", passed, detail, retried > 0)
+
+
+def test_read_only_tools_never_require_confirmation(base_url):
+    """Architectural invariant from graph_nodes.py: WRITE_TOOLS = {"save_to_wishlist"}
+    only, so search and availability must never themselves trigger the
+    confirmation gate - that's reserved for the one tool that writes data."""
+    sid = new_session(base_url)
+    search_resp, r1 = chat(base_url, sid, "search for tshirts under $50")
+    avail_resp, r2 = chat(base_url, sid, "is garment id 1 in stock in size M?")
+    passed = search_resp["type"] == "message" and avail_resp["type"] == "message"
+    detail = "neither read-only tool triggered a confirmation gate" if passed else \
+        f"search response: {search_resp}, availability response: {avail_resp}"
+    return Result("read_only_tools_never_require_confirmation", passed, detail, (r1 > 0) or (r2 > 0))
+
+
+def test_session_isolation(base_url):
+    """Each session is a separate LangGraph thread (thread_id = session_id
+    in web_server.py) - a fresh session must not see another session's
+    conversation history."""
+    sid_a = new_session(base_url)
+    secret = "48213"
+    chat(base_url, sid_a, f"Please remember this number for later: {secret}. Just acknowledge it, nothing else.")
+
+    sid_b = new_session(base_url)
+    resp, retried = chat(base_url, sid_b, "What number did I just ask you to remember?")
+    text = resp.get("text", "")
+    passed = resp["type"] == "message" and secret not in text
+    detail = "new session had no memory of the other session's number" if passed else f"response: {text!r}"
+    return Result("session_isolation", passed, detail, retried > 0)
+
+
 TEST_CASES = [
     test_no_hallucinated_checkout,
     test_search_returns_grounded_prices,
@@ -300,6 +419,12 @@ TEST_CASES = [
     test_rate_limit_enforced,
     test_empty_search_is_honest,
     test_care_instructions_missing_garment,
+    test_article_type_normalization,
+    test_search_respects_colour_filter,
+    test_search_respects_price_boundary,
+    test_availability_handles_unknown_size,
+    test_read_only_tools_never_require_confirmation,
+    test_session_isolation,
 ]
 
 
