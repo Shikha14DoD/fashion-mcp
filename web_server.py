@@ -1,6 +1,7 @@
 import asyncio
 import os
 import uuid
+from dotenv import load_dotenv
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
@@ -10,6 +11,12 @@ from google.genai import types
 from langgraph.graph import StateGraph, END
 from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.types import Command
+
+load_dotenv()  # local dev reads keys from .env; on Render they're real env vars
+REQUIRED_ENV = ("DATABASE_URL", "GROQ_API_KEY", "GEMINI_API_KEY")
+_missing = [name for name in REQUIRED_ENV if not os.environ.get(name)]
+if _missing:
+    raise RuntimeError(f"Missing required environment variables: {', '.join(_missing)}")
 
 from graph_state import AgentState
 from graph_nodes import make_agent_node, make_tools_node, confirm_node, mcp_tools_to_groq_schema, strip_hidden_args
