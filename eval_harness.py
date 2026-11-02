@@ -482,14 +482,28 @@ TEST_CASES = [
     test_session_isolation,
 ]
 
+# Call server.py's functions directly against the database: no LLM, no HTTP,
+# same result every run - safe to gate every push on. The rest drive the live
+# agent and can trip Groq's per-minute token limit when run back to back.
+DETERMINISTIC_TESTS = [
+    test_invalid_api_key_rejected,
+    test_wishlist_rejects_nonexistent_garment,
+    test_audit_logged_on_unexpected_error,
+    test_rate_limit_enforced,
+    test_article_type_normalization,
+]
+
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--base-url", default="http://127.0.0.1:8000")
+    parser.add_argument("--suite", choices=("all", "deterministic"), default="all",
+                        help="'deterministic' runs only the DB-level tests that need no LLM or running server")
     args = parser.parse_args()
 
+    tests = DETERMINISTIC_TESTS if args.suite == "deterministic" else TEST_CASES
     results = []
-    for test in TEST_CASES:
+    for test in tests:
         try:
             result = test(args.base_url)
         except Exception as e:
