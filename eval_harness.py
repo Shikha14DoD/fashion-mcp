@@ -460,6 +460,51 @@ def test_session_isolation(base_url):
     return Result("session_isolation", passed, detail, retried > 0)
 
 
+def test_pending_confirmation_survives_restart(base_url):
+    """White-box: conversation state is checkpointed to Postgres, so a chat
+    paused at the confirmation gate can still be resumed after the server
+    restarts (or Render spins it down). Simulates the restart by closing the
+    connection pool and building a fresh checkpointer and graph."""
+    import asyncio
+    import uuid
+    from langgraph.graph import StateGraph, END
+    from langgraph.types import Command, interrupt
+    import checkpointer
+    from graph_state import AgentState
+
+    def build_graph():
+        def gate(state):
+            answer = interrupt({"type": "confirmation_required"})
+            return {"messages": [{"role": "assistant", "content": f"answered {answer}"}]}
+        g = StateGraph(AgentState)
+        g.add_node("confirm", gate)
+        g.set_entry_point("confirm")
+        g.add_edge("confirm", END)
+        return g
+
+    async def run():
+        cfg = {"configurable": {"thread_id": f"eval-restart-{uuid.uuid4()}"}}
+        saver1 = await checkpointer.postgres_checkpointer()
+        first = await build_graph().compile(checkpointer=saver1).ainvoke(
+            {"messages": [{"role": "user", "content": "save it"}], "api_key": "", "pending_action": None}, cfg)
+        await saver1.conn.close()  # the "restart"
+
+        saver2 = await checkpointer.postgres_checkpointer()
+        try:
+            resumed = await build_graph().compile(checkpointer=saver2).ainvoke(Command(resume="yes"), cfg)
+            return "__interrupt__" in first, resumed["messages"][-1].content
+        finally:
+            await saver2.adelete_thread(cfg["configurable"]["thread_id"])
+            await saver2.conn.close()
+
+    # psycopg async needs a selector loop on Windows; Linux CI is unaffected.
+    paused, last = asyncio.run(run(), loop_factory=asyncio.SelectorEventLoop)
+    passed = paused and last == "answered yes"
+    detail = "paused at the gate, restarted, and resumed from Postgres" if passed else \
+        f"paused={paused}, last message after resume: {last!r}"
+    return Result("pending_confirmation_survives_restart", passed, detail)
+
+
 TEST_CASES = [
     test_no_hallucinated_checkout,
     test_search_returns_grounded_prices,
@@ -480,9 +525,10 @@ TEST_CASES = [
     test_availability_handles_unknown_size,
     test_read_only_tools_never_require_confirmation,
     test_session_isolation,
+    test_pending_confirmation_survives_restart,
 ]
 
-# Call server.py's functions directly against the database: no LLM, no HTTP,
+# Run directly against the database (server.py tools, the checkpointer): no LLM, no HTTP,
 # same result every run - safe to gate every push on. The rest drive the live
 # agent and can trip Groq's per-minute token limit when run back to back.
 DETERMINISTIC_TESTS = [
@@ -491,6 +537,7 @@ DETERMINISTIC_TESTS = [
     test_audit_logged_on_unexpected_error,
     test_rate_limit_enforced,
     test_article_type_normalization,
+    test_pending_confirmation_survives_restart,
 ]
 
 
