@@ -208,16 +208,37 @@ def test_declining_confirmation_is_respected(base_url):
     return Result("declining_confirmation_respected", passed, detail, retried > 0)
 
 
+def _max_audit_id():
+    with server.get_conn() as conn:
+        return conn.execute("SELECT COALESCE(MAX(id), 0) FROM audit_log").fetchone()[0]
+
+
+def _audit_rows_since(after_id, garment_id):
+    """(user_id, result) for save_to_wishlist audit rows written after after_id for this garment."""
+    with server.get_conn() as conn:
+        return conn.execute(
+            """SELECT user_id, result FROM audit_log
+               WHERE id > %(after)s AND tool = 'save_to_wishlist'
+                 AND (args->>'garment_id')::bigint = %(gid)s
+               ORDER BY id""",
+            {"after": after_id, "gid": garment_id},
+        ).fetchall()
+
+
 def test_invalid_api_key_rejected(base_url):
-    """White-box: save_to_wishlist must reject a bad key before ever touching
-    the database, and never consume rate-limit budget for the real demo user
-    in doing so (auth happens before the rate-limit check)."""
+    """White-box: save_to_wishlist must reject a bad key before the
+    rate-limit check or any wishlist write, and still record the attempt
+    in audit_log."""
     with server.get_conn() as conn:
         row = conn.execute("SELECT garment_id FROM inventory WHERE qty > 0 LIMIT 1").fetchone()
     garment_id = row[0]
+    before = _max_audit_id()
     result = server.save_to_wishlist(api_key="clearly_invalid_key_xyz", garment_id=garment_id)
-    passed = result.get("error") == "Invalid API key"
-    detail = "invalid key rejected before touching the database" if passed else f"unexpected result: {result}"
+    audited = _audit_rows_since(before, garment_id)
+    rejected = result.get("error") == "Invalid API key"
+    passed = rejected and audited == [(None, "auth_failed")]
+    detail = "invalid key rejected and logged as auth_failed" if passed else \
+        f"result: {result}, audit rows: {audited}"
     return Result("invalid_api_key_rejected", passed, detail)
 
 
@@ -231,10 +252,43 @@ def test_wishlist_rejects_nonexistent_garment(base_url):
         return Result("wishlist_rejects_nonexistent_garment", False, "no user row found to test against")
     api_key = row[0]
     bogus_id = 999_999_999
+    before = _max_audit_id()
     result = server.save_to_wishlist(api_key=api_key, garment_id=bogus_id)
-    passed = "does not exist" in result.get("error", "")
-    detail = "nonexistent garment id rejected" if passed else f"unexpected result: {result}"
+    audited = _audit_rows_since(before, bogus_id)
+    rejected = "does not exist" in result.get("error", "")
+    passed = rejected and len(audited) == 1 and audited[0][1] == "not_found"
+    detail = "nonexistent garment rejected and logged as not_found" if passed else \
+        f"result: {result}, audit rows: {audited}"
     return Result("wishlist_rejects_nonexistent_garment", passed, detail)
+
+
+def test_audit_logged_on_unexpected_error(base_url):
+    """White-box: the audit write lives in a finally block, so an attempt is
+    logged even when the call blows up partway through. Forces an exception
+    after auth succeeds and checks it both propagates and gets audited."""
+    with server.get_conn() as conn:
+        api_key = conn.execute("SELECT api_key FROM users LIMIT 1").fetchone()[0]
+        garment_id = conn.execute("SELECT id FROM garments LIMIT 1").fetchone()[0]
+
+    def boom(user_id):
+        raise RuntimeError("simulated failure")
+
+    original = server.check_rate_limit
+    server.check_rate_limit = boom
+    before = _max_audit_id()
+    try:
+        server.save_to_wishlist(api_key=api_key, garment_id=garment_id)
+        raised = False
+    except RuntimeError:
+        raised = True
+    finally:
+        server.check_rate_limit = original
+    audited = _audit_rows_since(before, garment_id)
+
+    passed = raised and len(audited) == 1 and audited[0][1] == "error"
+    detail = "exception propagated and the attempt was still audited as error" if passed else \
+        f"raised={raised}, audit rows: {audited}"
+    return Result("audit_logged_on_unexpected_error", passed, detail)
 
 
 def test_rate_limit_enforced(base_url):
@@ -416,6 +470,7 @@ TEST_CASES = [
     test_declining_confirmation_is_respected,
     test_invalid_api_key_rejected,
     test_wishlist_rejects_nonexistent_garment,
+    test_audit_logged_on_unexpected_error,
     test_rate_limit_enforced,
     test_empty_search_is_honest,
     test_care_instructions_missing_garment,

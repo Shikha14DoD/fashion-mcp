@@ -1,4 +1,5 @@
 import os
+import sys
 import psycopg
 import time
 import json
@@ -146,39 +147,44 @@ def save_to_wishlist(api_key: str, garment_id: int) -> dict:
     size, and only call this if it's in stock. If it's out of stock, tell
     the user and offer to check a different size instead of saving it."""
     start = time.time()
-    user_id = authenticate(api_key)
+    user_id = None
+    outcome = "error"  # stays "error" if anything below raises
+    try:
+        user_id = authenticate(api_key)
+        if user_id is None:
+            outcome = "auth_failed"
+            return {"error": "Invalid API key"}
 
-    if user_id is None:
-        log_action(None, "save_to_wishlist", {"garment_id": garment_id},
-                   "auth_failed", int((time.time() - start) * 1000))
-        return {"error": "Invalid API key"}
+        if not check_rate_limit(user_id):
+            outcome = "rate_limited"
+            return {"error": "Rate limit exceeded. Try again shortly."}
 
-    if not check_rate_limit(user_id):
-        log_action(user_id, "save_to_wishlist", {"garment_id": garment_id},
-                   "rate_limited", int((time.time() - start) * 1000))
-        return {"error": "Rate limit exceeded. Try again shortly."}
+        with get_conn() as conn:
+            exists = conn.execute(
+                "SELECT 1 FROM garments WHERE id = %(id)s", {"id": garment_id}
+            ).fetchone()
+            if not exists:
+                outcome = "not_found"
+                return {"error": f"Garment {garment_id} does not exist"}
 
-    with get_conn() as conn:
-        exists = conn.execute(
-            "SELECT 1 FROM garments WHERE id = %(id)s", {"id": garment_id}
-        ).fetchone()
-        if not exists:
+            conn.execute(
+                """
+                INSERT INTO wishlist (user_id, garment_id) VALUES (%(user_id)s, %(garment_id)s)
+                ON CONFLICT DO NOTHING
+                """,
+                {"user_id": user_id, "garment_id": garment_id},
+            )
+            conn.commit()
+
+        outcome = "success"
+        return {"status": "saved", "user_id": user_id, "garment_id": garment_id}
+    finally:
+        # A failed audit write must not mask the original exception.
+        try:
             log_action(user_id, "save_to_wishlist", {"garment_id": garment_id},
-                       "not_found", int((time.time() - start) * 1000))
-            return {"error": f"Garment {garment_id} does not exist"}
-
-        conn.execute(
-            """
-            INSERT INTO wishlist (user_id, garment_id) VALUES (%(user_id)s, %(garment_id)s)
-            ON CONFLICT DO NOTHING
-            """,
-            {"user_id": user_id, "garment_id": garment_id},
-        )
-        conn.commit()
-
-    latency = int((time.time() - start) * 1000)
-    log_action(user_id, "save_to_wishlist", {"garment_id": garment_id}, "success", latency)
-    return {"status": "saved", "user_id": user_id, "garment_id": garment_id}
+                       outcome, int((time.time() - start) * 1000))
+        except Exception as log_exc:
+            print(f"[audit log write failed: {type(log_exc).__name__}: {log_exc}]", file=sys.stderr)
 
 if __name__ == "__main__":
     mcp.run()
