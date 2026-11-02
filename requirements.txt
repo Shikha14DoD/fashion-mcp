@@ -27,7 +27,8 @@ jsonschema-specifications==2025.9.1
 langchain-core==1.5.5
 langchain-protocol==0.0.18
 langgraph==1.2.11
-langgraph-checkpoint==4.2.0
+langgraph-checkpoint==4.3.1
+langgraph-checkpoint-postgres==3.2.0
 langgraph-prebuilt==1.1.0
 langgraph-sdk==0.4.2
 langsmith==0.11.0
@@ -43,6 +44,7 @@ packaging==26.3
 pandas==3.0.5
 psycopg==3.3.4
 psycopg-binary==3.3.4
+psycopg-pool==3.3.3
 pyasn1==0.6.4
 pyasn1_modules==0.4.2
 pycparser==3.0

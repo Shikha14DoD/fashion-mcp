@@ -9,7 +9,6 @@ from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
 from google.genai import types
 from langgraph.graph import StateGraph, END
-from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.types import Command
 
 load_dotenv()  # local dev reads keys from .env; on Render they're real env vars
@@ -18,6 +17,7 @@ _missing = [name for name in REQUIRED_ENV if not os.environ.get(name)]
 if _missing:
     raise RuntimeError(f"Missing required environment variables: {', '.join(_missing)}")
 
+from checkpointer import make_checkpointer
 from graph_state import AgentState
 from graph_nodes import make_agent_node, make_tools_node, confirm_node, mcp_tools_to_groq_schema, strip_hidden_args
 
@@ -46,7 +46,6 @@ def mcp_tool_to_gemini_schema(tool):
 _graph_app = None
 _session_cm = None
 _session = None
-checkpointer = InMemorySaver()
 
 MCP_STARTUP_TIMEOUT_S = 30  # a hung subprocess handshake should fail loudly, not stall the deploy's health check
 
@@ -97,7 +96,7 @@ async def startup():
         lambda s: "tools" if (s.get("pending_action") or {}).get("approved") else "agent",
         {"tools": "tools", "agent": "agent"})
 
-    _graph_app = graph.compile(checkpointer=checkpointer)
+    _graph_app = graph.compile(checkpointer=await make_checkpointer())
 
 @app.post("/session")
 def new_session():
