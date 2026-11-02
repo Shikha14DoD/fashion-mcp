@@ -25,6 +25,17 @@ to happen to notice.
 - **Rate limiting is in-memory** (5 calls/60s per user) - resets on server
   restart and wouldn't hold up across multiple server instances. A
   production version would use Redis for shared state.
+- **Conversation state is in Postgres on Render, but in memory on Windows
+  local dev.** psycopg's async mode can't run on Windows' default Proactor
+  event loop, and the MCP stdio subprocess requires exactly that loop. So
+  `checkpointer.py` falls back to `InMemorySaver` on Windows. The Postgres
+  path is covered by `test_pending_confirmation_survives_restart`, which runs
+  on Linux in CI.
+- **The demo API key is stored in checkpointed graph state.** `api_key` is a
+  field in `AgentState`, so it lands in the checkpoint table. It's the shared
+  demo key that's already in the source, so nothing new is exposed, but a
+  real multi-user system should keep credentials out of persisted state and
+  look them up per request instead.
 - See also the `article_type` normalization limitation noted inline below.
 
 ## Bug log
