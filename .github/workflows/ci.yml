@@ -27,6 +27,8 @@ jobs:
           cache-dependency-path: frontend-next/package-lock.json
       - run: npm ci
       - run: npm run lint
+      # LayoutProps etc. are generated into .next/types, which a fresh checkout doesn't have
+      - run: npx next typegen
       - run: npx tsc --noEmit
       - run: npm run build
 
