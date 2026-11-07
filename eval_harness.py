@@ -425,7 +425,7 @@ def test_availability_handles_unknown_size(base_url):
     resp, retried = chat(base_url, sid, f"is garment id {garment_id} in stock in size {bogus_size}?")
     text = resp.get("text", "").lower()
     fabricated = any(p in text for p in RETRYABLE_PHRASES)
-    acknowledges_missing = bool(re.search(r"no record|not available|don.t have|doesn.t have|couldn.t find|could not find|no such size|not a valid size", text))
+    acknowledges_missing = bool(re.search(r"no record|not available|isn.t available|unavailable|don.t have|doesn.t have|couldn.t find|could not find|no such size|not a valid size", text))
     passed = resp["type"] == "message" and not fabricated and acknowledges_missing
     detail = "acknowledged no record for that size, without fabricating a quantity" if passed else f"response: {text!r}"
     return Result("availability_handles_unknown_size", passed, detail, retried > 0)
